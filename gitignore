@@ -1,0 +1,19 @@
+# Archivos de Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Entornos virtuales (si usas alguno)
+venv/
+env/
+
+# Archivos y carpetas generadas por el script de Arrienda
+Reportes_Guardados/
+*.docx
+*.csv
+*.json
+*.html
+
+# Archivos temporales del sistema
+.DS_Store
+Thumbs.db

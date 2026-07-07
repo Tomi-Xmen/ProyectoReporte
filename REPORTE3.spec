@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['REPORTE2.py'],
+    ['REPORTE3.py'],
     pathex=[],
     binaries=[],
     datas=[],
@@ -21,7 +21,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='REPORTE2',
+    name='REPORTE3',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -41,5 +41,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='REPORTE2',
+    name='REPORTE3',
 )

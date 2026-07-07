@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python test_equal.py)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('REPORTE3.py', encoding='utf-8'\\).read\\(\\)\\); print\\('Sintaxis OK'\\)\")"
+    ]
+  }
+}

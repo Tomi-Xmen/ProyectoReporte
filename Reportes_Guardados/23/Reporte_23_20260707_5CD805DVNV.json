@@ -1,0 +1,92 @@
+{
+    "CLIENTE": "23",
+    "SERIAL": "5CD805DVNV",
+    "SN_Win": "BHFTB-XNYQ9-PQ47X-8G8DJ-XW3GP",
+    "SN_HDD": "0026B7684B3A0135",
+    "SN_Transf": "PENDIENTE",
+    "SN_APP": "PENDIENTE",
+    "MODELO": "HP ProBook 450 G5",
+    "TIPO_MOVIMIENTO": "Entrega",
+    "GUIA_ID": "Sin Guía",
+    "OBS": "Sin observaciones",
+    "DETALLE_COMPONENTES": [
+        {
+            "nombre": "Carcaza",
+            "estado": "OK",
+            "obs": ""
+        },
+        {
+            "nombre": "Pantalla",
+            "estado": "OK",
+            "obs": ""
+        },
+        {
+            "nombre": "Teclado",
+            "estado": "OK",
+            "obs": ""
+        },
+        {
+            "nombre": "Touchpad",
+            "estado": "OK",
+            "obs": ""
+        },
+        {
+            "nombre": "Puertos USB",
+            "estado": "OK",
+            "obs": ""
+        },
+        {
+            "nombre": "Puertos Video",
+            "estado": "OK",
+            "obs": ""
+        },
+        {
+            "nombre": "Ethernet/Wi-Fi",
+            "estado": "OK",
+            "obs": ""
+        },
+        {
+            "nombre": "Placa base",
+            "estado": "OK",
+            "obs": ""
+        },
+        {
+            "nombre": "Memoria",
+            "estado": "OK",
+            "obs": ""
+        },
+        {
+            "nombre": "Disco duro",
+            "estado": "OK",
+            "obs": ""
+        },
+        {
+            "nombre": "Batería",
+            "estado": "OK",
+            "obs": ""
+        }
+    ],
+    "TIENE_FALLAS": false,
+    "DATA": {
+        "fecha": "07/07/2026 12:01",
+        "host": "NB-SYS-02",
+        "model": "HP ProBook 450 G5",
+        "serial": "5CD805DVNV",
+        "key": "BHFTB-XNYQ9-PQ47X-8G8DJ-XW3GP",
+        "cpu": "Intel(R) Core(TM) i7-8550U CPU @ 1.80GHz",
+        "ram_html": "<tr><th>Módulo RAM</th><td>8GB | 2400 | PC4 | Kingston | 9905624-043.A00G</td></tr><tr><th>Módulo RAM</th><td>8GB | 2400 | PC4 | Micron | 8ATF1G64HZ-2G6H1</td></tr>",
+        "ram_raw": [
+            "8GB | 2400 | PC4 | Kingston | 9905624-043.A00G",
+            "8GB | 2400 | PC4 | Micron | 8ATF1G64HZ-2G6H1"
+        ],
+        "disk_html": "<tr><th>Discos Internos</th><td>KINGSTON SNVS500G 500GB SSD M.2</td></tr><tr><th>Serie Disco Duro</th><td class='serial-tag'>0026B7684B3A0135</td></tr>",
+        "disk_serials": [
+            "0026B7684B3A0135"
+        ],
+        "net_rows": "<tr><td>Red Activa</td><td><span class='net-tag'>Realtek PCIe GbE Family Controller | IP: 192.168.2.11 | MAC: 80:CE:62:4D:93:7E</span></td></tr>",
+        "Manufacturer": "Micron / Kingston",
+        "Partnumber": "9905624-043.A00G / 8ATF1G64HZ-2G6H1",
+        "Battery": "58% | DiseÇño: 48017 mWh | Actual: 28044 mWh"
+    },
+    "OFFICE": "No"
+}

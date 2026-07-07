@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Inventario Maestro</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',Tahoma,sans-serif;background:#eef2f7;color:#1e293b;padding:30px}
+  .container{max-width:1050px;margin:auto}
+  .header{text-align:center;margin-bottom:28px}
+  h1{font-size:26px;color:#1a3c6e;margin-bottom:6px}
+  .subtitle{color:#64748b;font-size:13px;margin-bottom:14px}
+  .counter-box{background:#dbeafe;color:#1d4ed8;padding:5px 18px;border-radius:20px;
+    font-weight:700;font-size:13px;display:inline-block;border:1px solid #bfdbfe;margin-bottom:12px}
+
+  .stats-container { display:flex; justify-content:center; gap:10px; margin-bottom:22px; flex-wrap:wrap; }
+  .stat-pill { padding:5px 16px; border-radius:20px; font-weight:700; font-size:12px; border:1px solid; }
+  .stat-ram { background:#fce7f3; color:#be185d; border-color:#fbcfe8; }
+  .stat-cpu { background:#fef3c7; color:#b45309; border-color:#fde68a; }
+  .stat-disk { background:#dcfce7; color:#15803d; border-color:#bbf7d0; }
+
+  .button-group{display:flex;justify-content:center;gap:12px;margin-bottom:32px;flex-wrap:wrap}
+  .btn{color:#fff;border:none;padding:10px 22px;font-size:13px;font-weight:700;border-radius:8px;
+    cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.18);transition:transform .1s,box-shadow .1s}
+  .btn:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,.22)}
+  .btn:active{transform:translateY(0)}
+  .btn-copy{background:linear-gradient(135deg,#0078d4,#005a9e)}
+  .btn-export{background:linear-gradient(135deg,#16a34a,#15803d)}
+  .btn-delete{background:#ef4444;padding:5px 12px;font-size:11px;border-radius:6px}
+  .btn-delete:hover{background:#dc2626}
+
+  details{background:#fff;margin-bottom:12px;border-radius:12px;
+    box-shadow:0 2px 8px rgba(0,0,0,.08);overflow:hidden;border:1px solid #e2e8f0}
+  summary{padding:14px 18px;font-weight:700;cursor:pointer;
+    background:linear-gradient(135deg,#1a3c6e,#0f2d5a);color:#fff;
+    list-style:none;display:flex;justify-content:space-between;align-items:center;gap:10px}
+  summary:hover{background:linear-gradient(135deg,#1e4a84,#142f60)}
+  summary::-webkit-details-marker{display:none}
+
+  .tag-entrega{background:#22c55e;color:#fff;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700}
+  .tag-retiro{background:#f97316;color:#fff;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700}
+  .tag-falla{background:#ef4444;color:#fff;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700;margin-left:8px}
+  .logistics-row{background:#f8fafc}
+
+  .content{padding:20px 22px;border-top:1px solid #f1f5f9}
+  .content-header{display:flex;justify-content:flex-end;margin-bottom:10px; gap: 8px;}
+  table{border-collapse:collapse;width:100%}
+  th,td{border:1px solid #e2e8f0;padding:9px 12px;text-align:left;font-size:13px}
+  th{background:#f8fafc;width:28%;color:#475569;font-weight:600}
+  tr:hover td,tr:hover th{background:#f0f9ff}
+  .serial-tag{color:#dc2626;font-weight:700;font-family:Consolas,monospace}
+  .net-tag{background:#dcfce7;color:#166534;padding:2px 7px;border-radius:4px;font-weight:600;font-size:12px}
+  .win-key{color:#1d4ed8;font-family:Consolas,monospace;font-weight:700;font-size:12px}
+  .obs-row{background:#fef9c3!important}
+  .obs-row td,.obs-row th{color:#854d0e;font-weight:600;font-style:italic}
+  .falla-row{background:#fee2e2!important}
+  .falla-row td,.falla-row th{color:#991b1b;font-weight:600}
+  .office-row{background:#eff6ff}
+  .office-row td,.office-row th{color:#1e40af}
+</style>
+<script>
+function actualizarEstadisticas() {
+  let eqs = document.querySelectorAll('details');
+  document.getElementById('total-count').innerText = eqs.length;
+
+  let cpus = {}, rams = {}, discos = {};
+
+  eqs.forEach(eq => {
+    let d = extraerDatos(eq);
+
+    let cpuU = d.cpu.toUpperCase();
+    let cpuKey = "Otro";
+    if(cpuU.includes("I3")) cpuKey = "i3";
+    else if(cpuU.includes("I5")) cpuKey = "i5";
+    else if(cpuU.includes("I7")) cpuKey = "i7";
+    else if(cpuU.includes("I9")) cpuKey = "i9";
+    else if(cpuU.includes("RYZEN 3")) cpuKey = "Ryzen 3";
+    else if(cpuU.includes("RYZEN 5")) cpuKey = "Ryzen 5";
+    else if(cpuU.includes("RYZEN 7")) cpuKey = "Ryzen 7";
+    cpus[cpuKey] = (cpus[cpuKey] || 0) + 1;
+
+    let ramMatch = d.specs.match(/^(\d+GB)/);
+    let ramKey = ramMatch ? ramMatch[1] : "Otra";
+    rams[ramKey] = (rams[ramKey] || 0) + 1;
+
+    d.discos.forEach(dk => {
+      let desc = dk.desc.toUpperCase();
+      let tipo = "Desconocido";
+      if(desc.includes("M.2") || desc.includes("NVME")) tipo = "M.2 NVMe";
+      else if(desc.includes("SSD")) tipo = "SSD 2.5\"";
+      else if(desc.includes("HDD")) tipo = "HDD";
+      discos[tipo] = (discos[tipo] || 0) + 1;
+    });
+  });
+
+  let mkHTML = (obj, clase, prefijo) => {
+    let arr = Object.entries(obj).map(([k,v]) => `${k} (${v})`);
+    return arr.length ? `<span class="stat-pill ${clase}">${prefijo}: ${arr.join(' | ')}</span>` : '';
+  };
+
+  let statsDiv = document.getElementById('stats-container');
+  if(statsDiv) {
+    statsDiv.innerHTML = mkHTML(rams, 'stat-ram', 'RAM') +
+                         mkHTML(cpus, 'stat-cpu', 'CPU') +
+                         mkHTML(discos, 'stat-disk', 'Discos');
+  }
+}
+
+document.addEventListener("DOMContentLoaded", actualizarEstadisticas);
+
+function eliminarEquipo(id){
+  if(confirm("¿Quitar este equipo del reporte actual?\n(No afecta los archivos ya guardados)")){
+    let n=document.getElementById(id);
+    if(n){
+      n.remove();
+      actualizarEstadisticas();
+    }
+  }
+}
+
+function extraerDatos(eq){
+  let model  = eq.querySelector('.model-name').innerText.trim();
+  let serial = eq.querySelector('.serial-tag').innerText.trim();
+  let tds=eq.querySelectorAll('th,td');
+  let obs="",cpu="",office="",guia="",mov="",ramSpeed="",ramTech="PC4",fallas="",Manufacturer="",Partnumber="Desconocida";
+  let totalRam=0,ramArr=[],discos=[],tempDesc="";
+
+  for(let i=0;i<tds.length;i++){
+    if(tds[i].tagName !== 'TH') continue;
+
+    let t=tds[i].innerText.trim();
+    if(t==='N° de Guía')          guia   =tds[i+1].innerText.trim();
+    if(t==='Tipo Movimiento')     mov    =tds[i+1].innerText.trim();
+    if(t.includes('Obs. General'))obs    =tds[i+1].innerText.trim();
+    if(t==='Fallas Detectadas')   fallas =tds[i+1].innerText.trim();
+    if(t==='Procesador')          cpu    =tds[i+1].innerText.trim();
+    if(t.includes('Office'))      office =tds[i+1].innerText.trim();
+    if(t==='Discos Internos')     tempDesc=tds[i+1].innerText.trim();
+    if(t==='Serie Disco Duro')    discos.push({desc:tempDesc,serial:tds[i+1].innerText.trim()});
+    if(t==='Módulo RAM'){
+      let p=tds[i+1].innerText.split('|');
+      let n=parseInt(p[0].replace(/\D/g,''));
+      if(!isNaN(n)){totalRam+=n;ramArr.push(n)}
+      if(p[1]&&ramSpeed==="")ramSpeed=p[1].trim();
+      if(p[2]&&ramTech==="PC4")ramTech=p[2].trim();
+      if(p[3]&&Manufacturer==="")Manufacturer=p[3].trim()
+      if(p[4]&&Partnumber==="Desconocida")Partnumber=p[4].trim()
+    }
+  }
+
+  let ramFinal="RAM Desconocida";
+  if(totalRam>0){
+    let det=ramArr.length>1?(ramArr.every(v=>v===ramArr[0])?`(${ramArr[0]}X${ramArr.length})`:`(${ramArr.join('+')})`):"";
+    let ts=ramSpeed!=="Desconocida"?`${ramTech}-${ramSpeed}Mhz`:ramTech;
+    ramFinal=`${totalRam}GB${det} (${ts})`;
+  }
+  let diskSimple=discos.map(d=>{let m=d.desc.match(/(\d+)\s*GB\s*(.*)/i);return m?m[1]+" GB "+m[2]:d.desc});
+  let specs=ramFinal+(diskSimple.length>0?", "+diskSimple.join(" + "):"");
+  if(obs&&obs!=="Sin observaciones")specs+=", OBS: "+obs;
+  if(fallas&&fallas!=="Ninguna")specs+=", FALLAS: "+fallas;
+
+  return {model,serial,cpu,obs,office,guia,mov,discos,specs,equipoFull:model+" "+cpu, fallas, Manufacturer, Partnumber};
+}
+
+function copiarFilas(){
+  let txt="";
+  document.querySelectorAll('details').forEach(eq=>{
+    let d=extraerDatos(eq);
+    txt+=`${d.equipoFull}\t${d.specs}\t${d.serial}\n`;
+    d.discos.forEach(dk=>{
+      let lbl=dk.desc.toUpperCase().includes("HDD")?"HDD":"SSD";
+      txt+=`${lbl}\t${dk.desc}\t${dk.serial}\n`;
+    });
+    if(d.office&&d.office.includes('Key:')){
+      let ver=(d.office.match(/Office\s+([A-Za-z0-9]+)/)||[])[1]||"2016";
+      let key=(d.office.match(/Key:\s*([^)]+)/)||[])[1]||"";
+      txt+=`OFFICE ${ver}\tHOME AND BUSINESS\t${key.trim()}\n`;
+    }
+  });
+
+  if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(txt).then(() => {
+          alert("✅ ¡Filas copiadas!\n\nPega directamente en tu Excel / Valida.");
+      }).catch(err => {
+          alert("Error al copiar al portapapeles.");
+      });
+  } else {
+      let ta=document.createElement("textarea");ta.value=txt;document.body.appendChild(ta);ta.select();
+      try{document.execCommand('copy');alert("✅ ¡Filas copiadas!\n\nPega directamente en tu Excel / Valida.");}
+      catch(e){alert("Error al copiar.")}
+      document.body.removeChild(ta);
+  }
+}
+
+function exportarValidaCSV(){
+  let csv="\uFEFFTIPO;GUIA;NOMBRE DEL EQUIPO;DESCRIPCION;NUMERO DE SERIE;OBSERVACIONES\n";
+  document.querySelectorAll('details').forEach(eq=>{
+    let d=extraerDatos(eq);
+    csv+=`"${d.mov}";"${d.guia}";"${d.equipoFull}";"${d.specs}";"${d.serial}";"${d.obs}"\n`;
+    d.discos.forEach(dk=>{
+      let lbl=dk.desc.toUpperCase().includes("HDD")?"HDD":"SSD";
+      csv+=`"${d.mov}";"${d.guia}";"${lbl}";"${dk.desc}";"${dk.serial}";""\n`;
+    });
+    if(d.office&&d.office.includes('Key:')){
+      let ver=(d.office.match(/Office\s+([A-Za-z0-9]+)/)||[])[1]||"2016";
+      let key=(d.office.match(/Key:\s*([^)]+)/)||[])[1]||"";
+      csv+=`"${d.mov}";"${d.guia}";"OFFICE ${ver}";"HOME AND BUSINESS";"${key.trim()}";""\n`;
+    }
+  });
+  let blob=new Blob([csv],{type:'text/csv;charset=utf-8;'}),a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  let titulo=document.querySelector('title').innerText;
+  let tipo=titulo.includes("Entregas")?"Entregas":(titulo.includes("Retiros")?"Retiros":"General");
+  let cliente=titulo.replace(tipo+" - ","").replace("Inventario Maestro","General").replace(/ /g,"_");
+  a.download=`Reporte_${tipo}_${cliente}_${new Date().toISOString().slice(0,10).replace(/-/g,"")}.csv`;
+  a.style.visibility='hidden';document.body.appendChild(a);a.click();document.body.removeChild(a);
+}
+
+/* --- LOGICA DE IMPRESIÓN CENTRALIZADA --- */
+
+function getPrintStyle() {
+  return `
+    <style>
+      @media print {
+        @page { margin: 15mm; size: auto; }
+        body { margin: 0; }
+        .no-print { display: none; }
+        .page-break { page-break-after: always; }
+      }
+      body { font-family: 'Arial', sans-serif; font-size: 11px; color: #000; max-width: 700px; margin: auto; padding: 20px; line-height: 1.4; }
+      .header-title { display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 20px; font-size: 13px; }
+      .row { margin-bottom: 10px; font-size: 11px;}
+      .row span { margin-right: 25px; }
+      table { width: 100%; border-collapse: collapse; margin-top: 15px; margin-bottom: 20px; }
+      th, td { border: 1px solid #000; padding: 5px 8px; text-align: left; }
+      .center { text-align: center; }
+      .checkboxes { font-family: 'Segoe UI Symbol', sans-serif; }
+      .bold { font-weight: bold; }
+    </style>
+  `;
+}
+
+function generarHtmlEtiqueta(d, comps) {
+  let fecha = new Date().toLocaleDateString('es-CL');
+  let cpuLimpia = d.cpu.replace(/Intel\(R\)|Core\(TM\)/gi, "").trim();
+
+  let trs = comps.map(c => {
+     let iconOK   = c.estado === "OK" ? "☑" : "□";
+     let iconOBS  = c.estado === "OBS" ? "☑" : "□";
+     let iconMalo = c.estado === "MALO" ? "☑" : "□";
+     return `<tr>
+       <td>${c.nombre}</td>
+       <td class="center">${iconOK} OK &nbsp;&nbsp;&nbsp; ${iconOBS} OBS &nbsp;&nbsp;&nbsp; ${iconMalo} MALO</td>
+       <td>${c.obs}</td>
+     </tr>`;
+  }).join("");
+
+  return `
+    <div class="header-title">
+      <span>ETIQUETAS NOTEBOOK</span>
+      <span>FECHA: ${fecha}</span>
+    </div>
+    <div class="row">
+      <span><span class="bold">MODELO:</span> ${d.model}</span>
+      <span><span class="bold">PROCESADOR:</span> ${cpuLimpia}</span>
+      <span><span class="bold">GUIA:</span> ${d.guia}</span>
+      <span><span class="bold">SERIAL:</span> ${d.serial}</span>
+    </div>
+    <div class="row checkboxes" style="margin-bottom:20px;">
+      <span class="bold">ESTADO GLOBAL:</span> &nbsp;&nbsp;&nbsp;&nbsp;
+      □ BUENA &nbsp;&nbsp;&nbsp; ☑ POR REPARAR &nbsp;&nbsp;&nbsp; □ MALA &nbsp;&nbsp;&nbsp; □ REPUESTO
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th width="20%">REVISIÓN DE COMPONENTES</th>
+          <th width="35%" class="center">ESTADO</th>
+          <th width="45%">OBSERVACIÓN</th>
+        </tr>
+      </thead>
+      <tbody class="checkboxes">
+        ${trs}
+      </tbody>
+    </table>
+    <div class="row checkboxes bold" style="margin-top:20px;">
+      CHECKLIST: &nbsp;&nbsp;&nbsp;&nbsp; □ PRUEBA S/O &nbsp;&nbsp;&nbsp;&nbsp; □ HYDRA &nbsp;&nbsp;&nbsp;&nbsp; □ HARDWARE DEFAULT
+    </div>
+  `;
+}
+
+function imprimirEtiqueta(id) {
+  let eq = document.getElementById(id);
+  if(!eq) return;
+  let d = extraerDatos(eq);
+
+  let rawComps = eq.getAttribute('data-comps');
+  let comps = [];
+  try { comps = JSON.parse(rawComps); } catch(e) {}
+
+  let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Etiqueta ${d.serial}</title>${getPrintStyle()}</head><body>${generarHtmlEtiqueta(d, comps)}</body></html>`;
+
+  let printWin = window.open('', '', 'width=800,height=600');
+  printWin.document.open();
+  printWin.document.write(html);
+  printWin.document.close();
+  printWin.focus();
+  setTimeout(() => { printWin.print(); printWin.close(); }, 350);
+}
+
+function imprimirTodasEtiquetas() {
+  let etiquetasHtml = [];
+
+  document.querySelectorAll('details').forEach(eq => {
+    if (eq.querySelector('.tag-falla')) {
+      let d = extraerDatos(eq);
+      let rawComps = eq.getAttribute('data-comps');
+      let comps = [];
+      try { comps = JSON.parse(rawComps); } catch(e) {}
+
+      etiquetasHtml.push(generarHtmlEtiqueta(d, comps));
+    }
+  });
+
+  if (etiquetasHtml.length === 0) {
+    alert("No hay equipos con fallas en este reporte para imprimir.");
+    return;
+  }
+
+  let contenido = etiquetasHtml.join('<div class="page-break"></div>');
+
+  let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Lote de Etiquetas</title>${getPrintStyle()}</head><body>${contenido}</body></html>`;
+
+  let printWin = window.open('', '', 'width=800,height=600');
+  printWin.document.open();
+  printWin.document.write(html);
+  printWin.document.close();
+  printWin.focus();
+  setTimeout(() => { printWin.print(); printWin.close(); }, 500);
+}
+</script>
+</head>
+<body>
+<div class="container">
+<div class="header">
+  <h1>📋 Entregas - 23</h1>
+  <p class="subtitle">Sistema de Control de Entregas y Retiros</p>
+  <span class="counter-box">Total Equipos: <span id="total-count">1</span></span>
+
+  <div id="stats-container" class="stats-container"></div>
+
+  <div class="button-group">
+    <button class="btn btn-copy"   onclick="copiarFilas()">📋 Copiar Filas (Pegar en Valida)</button>
+    <button class="btn btn-export" onclick="exportarValidaCSV()">📥 Descargar CSV</button>
+    <button class="btn" style="background:#334155;" onclick="imprimirTodasEtiquetas()">🖨️ Imprimir Lote de Etiquetas</button>
+  </div>
+</div>
+<div id="main-list">
+<details id="dev-5CD805DVNV" data-comps='[{&quot;nombre&quot;: &quot;Carcaza&quot;, &quot;estado&quot;: &quot;OK&quot;, &quot;obs&quot;: &quot;&quot;}, {&quot;nombre&quot;: &quot;Pantalla&quot;, &quot;estado&quot;: &quot;OK&quot;, &quot;obs&quot;: &quot;&quot;}, {&quot;nombre&quot;: &quot;Teclado&quot;, &quot;estado&quot;: &quot;OK&quot;, &quot;obs&quot;: &quot;&quot;}, {&quot;nombre&quot;: &quot;Touchpad&quot;, &quot;estado&quot;: &quot;OK&quot;, &quot;obs&quot;: &quot;&quot;}, {&quot;nombre&quot;: &quot;Puertos USB&quot;, &quot;estado&quot;: &quot;OK&quot;, &quot;obs&quot;: &quot;&quot;}, {&quot;nombre&quot;: &quot;Puertos Video&quot;, &quot;estado&quot;: &quot;OK&quot;, &quot;obs&quot;: &quot;&quot;}, {&quot;nombre&quot;: &quot;Ethernet/Wi-Fi&quot;, &quot;estado&quot;: &quot;OK&quot;, &quot;obs&quot;: &quot;&quot;}, {&quot;nombre&quot;: &quot;Placa base&quot;, &quot;estado&quot;: &quot;OK&quot;, &quot;obs&quot;: &quot;&quot;}, {&quot;nombre&quot;: &quot;Memoria&quot;, &quot;estado&quot;: &quot;OK&quot;, &quot;obs&quot;: &quot;&quot;}, {&quot;nombre&quot;: &quot;Disco duro&quot;, &quot;estado&quot;: &quot;OK&quot;, &quot;obs&quot;: &quot;&quot;}, {&quot;nombre&quot;: &quot;Bater\u00eda&quot;, &quot;estado&quot;: &quot;OK&quot;, &quot;obs&quot;: &quot;&quot;}]' open>
+<summary>
+  <span class="model-name">HP ProBook 450 G5</span>
+  <span style="font-size:12px;opacity:.85">S/N: 5CD805DVNV &nbsp;|&nbsp; 📅 07/07/2026 12:01 </span>
+</summary>
+<div class="content">
+  <div class="content-header">
+    
+    <button class="btn btn-delete" onclick="eliminarEquipo('dev-5CD805DVNV')">🗑️ Quitar del Reporte</button>
+  </div>
+  <table>
+    <tr class="logistics-row"><th>Tipo Movimiento</th><td><b>Entrega</b></td></tr>
+    <tr class="logistics-row"><th>N° de Guía</th><td><b>Sin Guía</b></td></tr>
+    
+    <tr class="obs-row"><th>⚠️ Obs. General</th><td>Sin observaciones</td></tr>
+    
+    <tr><th>Número de Serie</th><td class="serial-tag">5CD805DVNV</td></tr>
+    <tr><th>Licencia Windows (OA3)</th><td class="win-key">BHFTB-XNYQ9-PQ47X-8G8DJ-XW3GP</td></tr>
+    <tr><th>Procesador</th><td>Intel(R) Core(TM) i7-8550U CPU @ 1.80GHz</td></tr>
+    <tr><th>🔋 Salud Batería</th><td>58% | DiseÇño: 48017 mWh | Actual: 28044 mWh</td></tr>
+    <tr><th>Módulo RAM</th><td>8GB | 2400 | PC4 | Kingston | 9905624-043.A00G</td></tr><tr><th>Módulo RAM</th><td>8GB | 2400 | PC4 | Micron | 8ATF1G64HZ-2G6H1</td></tr><tr><th>Discos Internos</th><td>KINGSTON SNVS500G 500GB SSD M.2</td></tr><tr><th>Serie Disco Duro</th><td class='serial-tag'>0026B7684B3A0135</td></tr><tr><td>Red Activa</td><td><span class='net-tag'>Realtek PCIe GbE Family Controller | IP: 192.168.2.11 | MAC: 80:CE:62:4D:93:7E</span></td></tr>
+  </table>
+</div></details>
+
+
+
+</div></div></body></html>

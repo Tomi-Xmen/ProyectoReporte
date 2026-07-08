@@ -40,7 +40,7 @@ import webbrowser
 import time
 import tkinter as tk
 from datetime import datetime
-from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import filedialog, messagebox, ttk
 
 # --- SOLUCIÓN PYINSTALLER: Asegurar que el directorio de trabajo sea siempre el correcto ---
 if getattr(sys, "frozen", False):
@@ -757,7 +757,7 @@ def _add_falla_item(doc, texto, font_size=11):
 # ─────────────────────────────────────────────────────────
 
 
-def generar_informe_word(cliente, equipos_malos, ruta_cliente):
+def generar_informe_word(cliente, equipos_malos, ruta_cliente, id_lote=""):
     if not DOCX_AVAILABLE:
         messagebox.showwarning(
             "Falta Librería", "No se pudo generar el Word porque falta 'python-docx'."
@@ -867,8 +867,9 @@ def generar_informe_word(cliente, equipos_malos, ruta_cliente):
         p_firma.add_run("21.790.634-2")
 
         fecha_str = datetime.now().strftime("%Y%m%d")
-        nombre_archivo = f"Informe_Tecnico_{cliente}_{fecha_str}.docx"
-        ruta_guardado = os.path.join(ruta_cliente, nombre_archivo)
+        id_part = f"_{id_lote}" if id_lote and id_lote != "SN" else ""
+        nombre_archivo = f"Informe_Tecnico_{cliente}{id_part}_{fecha_str}.docx"
+        ruta_guardado = _ruta_no_pisar(os.path.join(ruta_cliente, nombre_archivo))
         doc.save(ruta_guardado)
 
     except Exception as e:
@@ -1041,18 +1042,37 @@ _GUIA_CONFIG = os.path.join(os.getcwd(), "Reportes_Guardados", ".guia_retiro.jso
 # ============================================================================
 # 7. PERSISTENCIA (config de guía, guardado de equipos, empaque, envío a red)
 # ============================================================================
-def guardar_guia_config(guia: str):
+def guardar_guia_config(mov: str, valor: str):
+    """
+    Recuerda el ID/guía del último equipo del lote para reusarlo en el resto.
+    Se guarda por tipo de movimiento: la guía de RETIRO y el ID de orden de
+    ENTREGA se recuerdan por separado (dict {"Retiro": "...", "Entrega": "..."}).
+    """
     os.makedirs(os.path.dirname(_GUIA_CONFIG), exist_ok=True)
-    with open(_GUIA_CONFIG, "w", encoding="utf-8") as f:
-        json.dump({"guia": guia}, f)
-
-
-def cargar_guia_config() -> str:
     try:
         with open(_GUIA_CONFIG, "r", encoding="utf-8") as f:
-            return json.load(f).get("guia", "")
+            cfg = json.load(f)
+        if not isinstance(cfg, dict):
+            cfg = {}
     except Exception:
-        return ""
+        cfg = {}
+    cfg[mov] = valor
+    with open(_GUIA_CONFIG, "w", encoding="utf-8") as f:
+        json.dump(cfg, f)
+
+
+def cargar_guia_config(mov: str = "Retiro") -> str:
+    try:
+        with open(_GUIA_CONFIG, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        if isinstance(cfg, dict):
+            if mov in cfg:
+                return cfg.get(mov, "")
+            # Compatibilidad con el formato antiguo {"guia": "..."} (solo retiro).
+            return cfg.get("guia", "") if mov == "Retiro" else ""
+    except Exception:
+        pass
+    return ""
 
 
 def limpiar_guia_config():
@@ -1061,6 +1081,25 @@ def limpiar_guia_config():
             os.remove(_GUIA_CONFIG)
     except Exception:
         pass
+
+
+def contar_pendientes():
+    """
+    Cuenta los equipos ya escaneados que AÚN NO se empacaron (los data_*.json
+    sueltos en Reportes_Guardados), separados por movimiento. Sirve para avisar
+    en el menú y no mezclar equipos de clientes distintos en un mismo lote.
+    Devuelve (entregas, retiros).
+    """
+    ruta_base = os.path.join(os.getcwd(), "Reportes_Guardados")
+    ent = ret = 0
+    if os.path.isdir(ruta_base):
+        for archivo in os.listdir(ruta_base):
+            if archivo.endswith(".json") and archivo.startswith("data_"):
+                if archivo.startswith("data_Retiro_"):
+                    ret += 1
+                else:  # data_Entrega_* o formato antiguo data_<serial>
+                    ent += 1
+    return ent, ret
 
 
 # ============================================================================
@@ -1137,10 +1176,11 @@ def guardar_equipo_general(
     guia_final = guia or "Sin Guía"
     tipo = "Entregas" if mov == "Entrega" else "Retiros"
     report_file = os.path.join(ruta_base, f"Reporte_{tipo}.html")
-    json_file = os.path.join(
-        ruta_base, f"data_{re.sub(r'[^a-zA-Z0-9]', '', data['serial'])}.json"
-    )
-    safe_id = f"dev-{re.sub(r'[^a-zA-Z0-9]', '', data['serial'])}"
+    serial_clean = re.sub(r"[^a-zA-Z0-9]", "", data["serial"])
+    # El JSON individual lleva el movimiento en el nombre: así un mismo equipo
+    # escaneado como Entrega y luego como Retiro NO se pisa entre sí.
+    json_file = os.path.join(ruta_base, f"data_{mov}_{serial_clean}.json")
+    safe_id = f"dev-{serial_clean}"
 
     office_html = (
         (
@@ -1271,32 +1311,175 @@ def accion_agregar_lote(
         detalle_componentes,
     )
 
-    if mov == "Retiro" and guia:
-        guardar_guia_config(guia)
+    if guia:
+        guardar_guia_config(mov, guia)
 
     tipo = "Entregas" if mov == "Entrega" else "Retiros"
     messagebox.showinfo("✅ Guardado", f"Equipo agregado al archivo 'Reporte_{tipo}'.")
     mostrar_menu_principal(ventana)
 
 
+# Configuración por tipo de movimiento usada al empacar el lote. Cada movimiento
+# tiene su carpeta raíz (ENTREGA / RETIROS), su rótulo de documento y el nombre
+# del HTML acumulado pendiente en Reportes_Guardados.
+_MOV_CFG = {
+    "Entrega": {
+        "tipo_doc": "Entregas",
+        "grupo": "ENTREGA",
+        "html": "Reporte_Entregas.html",
+        "etiqueta_id": "Orden",  # rótulo del ID en el nombre del HTML
+    },
+    "Retiro": {
+        "tipo_doc": "Retiros",
+        "grupo": "RETIROS",
+        "html": "Reporte_Retiros.html",
+        "etiqueta_id": "Guia",
+    },
+}
+
+
+def _id_lote(equipos):
+    """
+    Deriva el identificador para el nombre de archivo del lote a partir de las
+    guías/IDs de los equipos: la guía de retiro o el ID de orden de entrega.
+    Devuelve el/los ID únicos saneados, o 'SN' si no hay ninguno válido.
+    """
+    ids = []
+    for eq in equipos:
+        g = str(eq.get("GUIA_ID", "")).strip()
+        if g and g not in ("Sin Guía", "S/N", "PENDIENTE", ""):
+            ids.append(g)
+    ids = list(dict.fromkeys(ids))  # únicos, preservando orden
+    if not ids:
+        return "SN"
+    # Con muchas guías/órdenes distintas evitamos nombres kilométricos que
+    # revienten el límite de ruta de Windows (~260 caracteres).
+    if len(ids) > 3:
+        return "VARIOS"
+    saneado = re.sub(r"[^a-zA-Z0-9\-_]", "", "-".join(ids).replace(" ", "_"))
+    return saneado[:40] or "SN"
+
+
+def _ruta_no_pisar(ruta):
+    """
+    Devuelve una ruta que NO exista aún: si el archivo ya está, agrega
+    ' (2)', ' (3)'… antes de la extensión. Evita sobrescribir un HTML,
+    FUSIONADO o Word de un lote anterior del mismo cliente/día.
+    """
+    if not os.path.exists(ruta):
+        return ruta
+    raiz, ext = os.path.splitext(ruta)
+    n = 2
+    while os.path.exists(f"{raiz} ({n}){ext}"):
+        n += 1
+    return f"{raiz} ({n}){ext}"
+
+
+# Marcador local (no se sube al NAS) que indica que la carpeta de un cliente ya
+# fue enviada a la red. Al empacar contenido nuevo se borra para reenviarla.
+_MARCADOR_ENVIADO = ".enviado"
+
+
+def _tocar_carpeta_cliente(ruta):
+    """
+    Crea la carpeta del cliente y borra su marcador '.enviado' (si existía),
+    para que un lote recién empacado vuelva a considerarse pendiente de envío.
+    """
+    os.makedirs(ruta, exist_ok=True)
+    marcador = os.path.join(ruta, _MARCADOR_ENVIADO)
+    if os.path.exists(marcador):
+        try:
+            os.remove(marcador)
+        except Exception:
+            pass
+
+
+def _resumen_fusionado(eq):
+    """Resumen logístico de un equipo para el JSON FUSIONADO del lote."""
+    sn_app = eq.get("SN_APP", "PENDIENTE")
+    obs = eq.get("OBS", "")
+    return {
+        "SERIAL": eq.get("SERIAL", ""),
+        "SN_Win": eq.get("SN_Win", ""),
+        "SN_HDD": eq.get("SN_HDD", ""),
+        "SN_Transf": eq.get("SN_Transf", "PENDIENTE"),
+        "SN_APP": None if sn_app in ("PENDIENTE", "", None) else sn_app,
+        "OBS": None if obs in ("Sin observaciones", "", None) else obs,
+    }
+
+
 def empacar_lote(cliente_clean, ruta_base):
     """
-    Mueve los reportes HTML y los data_*.json pendientes a la carpeta del
-    cliente (renombrándolos con cliente + fecha), etiqueta cada JSON con el
-    cliente y, si hay equipos con fallas, genera el informe Word.
+    Empaca el lote pendiente separando por tipo de movimiento en dos árboles:
+        Reportes_Guardados/ENTREGA/<CLIENTE>/   y
+        Reportes_Guardados/RETIROS/<CLIENTE>/
+
+    En cada carpeta deja el HTML del reporte (nombrado con el ID del lote:
+    guía de retiro o ID de orden de entrega + fecha), los data_*.json
+    individuales, el JSON FUSIONADO y, si hay fallas, el informe Word.
 
     Lógica pura de archivos/negocio, SIN interacción de UI. Devuelve la lista
     de equipos con fallas para que el handler arme su mensaje.
     """
-    ruta_cliente = os.path.join(ruta_base, cliente_clean)
-    os.makedirs(ruta_cliente, exist_ok=True)
     fecha_hoy = datetime.now().strftime("%Y%m%d")
+    fecha_legible = datetime.now().strftime("%d-%m-%Y")
 
-    html_e = os.path.join(ruta_base, "Reporte_Entregas.html")
-    html_r = os.path.join(ruta_base, "Reporte_Retiros.html")
-    for archivo, tipo_doc in [(html_e, "Entregas"), (html_r, "Retiros")]:
+    rutas_cliente = {
+        mov: os.path.join(ruta_base, cfg["grupo"], cliente_clean)
+        for mov, cfg in _MOV_CFG.items()
+    }
+
+    # 1. Leer y rutear los data_*.json pendientes por tipo de movimiento.
+    #    (jsons_por_tipo guarda también los ilegibles, con jdata=None.)
+    equipos_por_tipo = {"Entrega": [], "Retiro": []}
+    jsons_por_tipo = {"Entrega": [], "Retiro": []}
+    equipos_malos = []
+    for archivo in os.listdir(ruta_base):
+        if not (archivo.endswith(".json") and archivo.startswith("data_")):
+            continue
+        ruta_orig = os.path.join(ruta_base, archivo)
+        stem = archivo[5:-5]  # <mov>_<serial> (o solo <serial> en formato antiguo)
+        try:
+            with open(ruta_orig, "r", encoding="utf-8") as f:
+                jdata = json.load(f)
+            jdata["CLIENTE"] = cliente_clean
+            mov = "Retiro" if jdata.get("TIPO_MOVIMIENTO") == "Retiro" else "Entrega"
+            serial_part = re.sub(r"[^a-zA-Z0-9]", "", jdata.get("SERIAL", "")) or stem
+            equipos_por_tipo[mov].append(jdata)
+            jsons_por_tipo[mov].append((ruta_orig, jdata, serial_part))
+            if mov == "Retiro" and jdata.get("TIENE_FALLAS", False):
+                equipos_malos.append(jdata)
+        except Exception:
+            # Ilegible: lo tratamos como entrega para no perderlo.
+            jsons_por_tipo["Entrega"].append((ruta_orig, None, stem))
+
+    ids = {mov: _id_lote(equipos_por_tipo[mov]) for mov in _MOV_CFG}
+
+    # 2. Mover/renombrar los JSON individuales a su carpeta de destino.
+    for mov, registros in jsons_por_tipo.items():
+        if not registros:
+            continue
+        _tocar_carpeta_cliente(rutas_cliente[mov])
+        tipo_doc = _MOV_CFG[mov]["tipo_doc"]
+        for ruta_orig, jdata, serial_part in registros:
+            nuevo_json = os.path.join(
+                rutas_cliente[mov],
+                f"Reporte_{tipo_doc}_{cliente_clean}_{ids[mov]}_{fecha_hoy}_{serial_part}.json",
+            )
+            if jdata is None:
+                shutil.move(ruta_orig, nuevo_json)
+                continue
+            with open(nuevo_json, "w", encoding="utf-8") as f:
+                json.dump(jdata, f, ensure_ascii=False, indent=4)
+            os.remove(ruta_orig)
+
+    # 3. Procesar los HTML acumulados (uno por tipo), nombrándolos con el ID.
+    for mov, cfg in _MOV_CFG.items():
+        archivo = os.path.join(ruta_base, cfg["html"])
         if not os.path.exists(archivo):
             continue
+        _tocar_carpeta_cliente(rutas_cliente[mov])
+        tipo_doc = cfg["tipo_doc"]
 
         with open(archivo, "r", encoding="utf-8") as f:
             content = f.read()
@@ -1308,67 +1491,118 @@ def empacar_lote(cliente_clean, ruta_base):
             f"<title>Reporte de {tipo_doc}</title>",
             f"<title>{tipo_doc} - {cliente_clean}</title>",
         )
-        nuevo = os.path.join(
-            ruta_cliente, f"Reporte_{tipo_doc}_{cliente_clean}_{fecha_hoy}.html"
-        )
-
+        # Nombre legible: "Entregas - CLIENTE - Orden OE-9001 - 08-07-2026.html"
+        # (se omite el ID cuando no hay guía/orden válida).
+        cliente_legible = cliente_clean.replace("_", " ")
+        id_part = f" - {cfg['etiqueta_id']} {ids[mov]}" if ids[mov] != "SN" else ""
+        nuevo = _ruta_no_pisar(os.path.join(
+            rutas_cliente[mov],
+            f"{tipo_doc} - {cliente_legible}{id_part} - {fecha_legible}.html",
+        ))
         with open(nuevo, "w", encoding="utf-8") as f:
             f.write(content)
         os.remove(archivo)
 
-    equipos_malos = []
-    todos_equipos = []
-    for archivo in os.listdir(ruta_base):
-        if not (archivo.endswith(".json") and archivo.startswith("data_")):
+    # 4. JSON fusionado por tipo (además de los individuales, que siguen
+    #    usándose en Auditoría y Unir JSON). Solo lleva el resumen logístico.
+    for mov, equipos in equipos_por_tipo.items():
+        if not equipos:
             continue
-        ruta_orig = os.path.join(ruta_base, archivo)
-        serial_part = archivo[5:-5]
-        nuevo_json = os.path.join(
-            ruta_cliente, f"Reporte_{cliente_clean}_{fecha_hoy}_{serial_part}.json"
-        )
-        try:
-            with open(ruta_orig, "r", encoding="utf-8") as f:
-                jdata = json.load(f)
-
-            jdata["CLIENTE"] = cliente_clean
-            todos_equipos.append(jdata)
-            if jdata.get("TIENE_FALLAS", False):
-                equipos_malos.append(jdata)
-
-            with open(nuevo_json, "w", encoding="utf-8") as f:
-                json.dump(jdata, f, ensure_ascii=False, indent=4)
-
-            os.remove(ruta_orig)
-        except Exception:
-            shutil.move(ruta_orig, nuevo_json)
-
-    # JSON fusionado: un único archivo con todos los equipos del lote (además
-    # de los individuales, que siguen usándose en Auditoría y Unir JSON).
-    # Solo lleva el resumen logístico; SN_APP y OBS quedan en null si están vacíos.
-    if todos_equipos:
-        def _resumen_fusionado(eq):
-            sn_app = eq.get("SN_APP", "PENDIENTE")
-            obs = eq.get("OBS", "")
-            return {
-                "SERIAL": eq.get("SERIAL", ""),
-                "SN_Win": eq.get("SN_Win", ""),
-                "SN_HDD": eq.get("SN_HDD", ""),
-                "SN_Transf": eq.get("SN_Transf", "PENDIENTE"),
-                "SN_APP": None if sn_app in ("PENDIENTE", "", None) else sn_app,
-                "OBS": None if obs in ("Sin observaciones", "", None) else obs,
-            }
-
-        resumen_equipos = [_resumen_fusionado(eq) for eq in todos_equipos]
-        merged_json = os.path.join(
-            ruta_cliente, f"Reporte_{cliente_clean}_{fecha_hoy}_FUSIONADO.json"
-        )
+        tipo_doc = _MOV_CFG[mov]["tipo_doc"]
+        resumen_equipos = [_resumen_fusionado(eq) for eq in equipos]
+        merged_json = _ruta_no_pisar(os.path.join(
+            rutas_cliente[mov],
+            f"Reporte_{tipo_doc}_{cliente_clean}_{ids[mov]}_{fecha_hoy}_FUSIONADO.json",
+        ))
         with open(merged_json, "w", encoding="utf-8") as f:
             json.dump(resumen_equipos, f, ensure_ascii=False, indent=4)
 
+    # 5. Informe Word de fallas (solo aplica a retiros).
     if equipos_malos:
-        generar_informe_word(cliente_clean, equipos_malos, ruta_cliente)
+        _tocar_carpeta_cliente(rutas_cliente["Retiro"])
+        generar_informe_word(
+            cliente_clean, equipos_malos, rutas_cliente["Retiro"], ids["Retiro"]
+        )
 
     return equipos_malos
+
+
+def _clientes_existentes():
+    """Nombres de clientes ya empacados (carpetas dentro de ENTREGA/ y RETIROS/)."""
+    ruta_base = os.path.join(os.getcwd(), "Reportes_Guardados")
+    nombres = set()
+    for grupo in ("ENTREGA", "RETIROS"):
+        ruta_grupo = os.path.join(ruta_base, grupo)
+        if os.path.isdir(ruta_grupo):
+            for cli in os.listdir(ruta_grupo):
+                if os.path.isdir(os.path.join(ruta_grupo, cli)):
+                    nombres.add(cli)
+    return sorted(nombres)
+
+
+def _normalizar_cliente(valor):
+    """Normaliza el nombre de cliente a MAYÚSCULAS y sin espacios (para carpeta)."""
+    return (
+        re.sub(r"[^a-zA-Z0-9\s_\-]", "", valor).strip().replace(" ", "_").upper()
+        or "GENERAL"
+    )
+
+
+def pedir_cliente(ventana):
+    """
+    Modal para elegir el cliente del lote: combobox editable con los clientes
+    ya existentes (o se escribe uno nuevo). Devuelve el nombre normalizado o
+    None si se cancela.
+    """
+    existentes = _clientes_existentes()
+    win = ventana_modal(ventana, "Empacar Lote", "440x230")
+    resultado = {"cliente": None}
+
+    titulo_ui(win, "📦 ¿A qué CLIENTE pertenece el lote?", size=12, pady=(18, 4))
+    tk.Label(
+        win,
+        text="Elige uno existente en la lista o escribe uno nuevo.",
+        font=fuente(9),
+        bg=COLORS["fondo"],
+        fg=COLORS["gris"],
+    ).pack(pady=(0, 10))
+
+    combo = ttk.Combobox(win, values=existentes, font=fuente(11), width=30)
+    combo.pack(pady=4)
+    combo.focus()
+
+    def confirmar(event=None):
+        if not combo.get().strip():
+            messagebox.showwarning(
+                "Falta el cliente", "Elige o escribe un cliente.", parent=win
+            )
+            return
+        resultado["cliente"] = combo.get().strip()
+        win.destroy()
+
+    combo.bind("<Return>", confirmar)
+
+    frame_bts = tk.Frame(win, bg=COLORS["fondo"])
+    frame_bts.pack(pady=18)
+    boton_accion(frame_bts, "✅ Empacar", confirmar).pack(side="left", padx=6)
+    tk.Button(
+        frame_bts,
+        text="Cancelar",
+        command=win.destroy,
+        bg=COLORS["gris"],
+        fg="white",
+        font=fuente(10, True),
+        padx=14,
+        pady=7,
+        cursor="hand2",
+        relief="flat",
+    ).pack(side="left", padx=6)
+
+    win.wait_window()
+
+    if not resultado["cliente"]:
+        return None
+    return _normalizar_cliente(resultado["cliente"])
 
 
 def accion_finalizar_lote(ventana):
@@ -1383,16 +1617,9 @@ def accion_finalizar_lote(ventana):
         )
         return
 
-    cliente = simpledialog.askstring(
-        "Empacar Lote", "¿A qué CLIENTE pertenecen estos equipos?", parent=ventana
-    )
-    if not cliente:
+    cliente_clean = pedir_cliente(ventana)
+    if not cliente_clean:
         return
-
-    cliente_clean = (
-        re.sub(r"[^a-zA-Z0-9\s_\-]", "", cliente).strip().replace(" ", "_").upper()
-        or "GENERAL"
-    )
 
     equipos_malos = empacar_lote(cliente_clean, ruta_base)
 
@@ -1403,7 +1630,8 @@ def accion_finalizar_lote(ventana):
 
     messagebox.showinfo(
         "📦 Lote Finalizado",
-        f"¡Lote empacado con éxito!\n\nCarpeta: {cliente_clean}{aviso_extra}",
+        f"¡Lote empacado con éxito!\n\nCliente: {cliente_clean}\n"
+        f"Guardado en las carpetas ENTREGA / RETIROS.{aviso_extra}",
     )
     limpiar_guia_config()
 
@@ -1415,13 +1643,31 @@ def accion_enviar_red(ventana):
         messagebox.showwarning("Aviso", "No hay reportes locales para enviar.")
         return
 
-    # Detectar solo las carpetas de clientes
-    carpetas = [d for d in os.listdir(carpeta_local) if os.path.isdir(os.path.join(carpeta_local, d))]
-    
-    if not carpetas:
+    # Reunir las carpetas de cliente que viven dentro de ENTREGA/ y RETIROS/.
+    # En el NAS se juntan por cliente (plano): cada cliente => una sola carpeta
+    # con sus entregas y retiros mezclados.
+    # Solo se consideran las carpetas de cliente que NO tienen el marcador
+    # '.enviado' (las ya subidas se saltan para no re-copiar ni pisar el NAS).
+    clientes = {}  # nombre_cliente -> [rutas origen (ENTREGA/cli, RETIROS/cli)]
+    hay_carpetas = False
+    for grupo in ("ENTREGA", "RETIROS"):
+        ruta_grupo = os.path.join(carpeta_local, grupo)
+        if not os.path.isdir(ruta_grupo):
+            continue
+        for cli in os.listdir(ruta_grupo):
+            ruta_cli = os.path.join(ruta_grupo, cli)
+            if not os.path.isdir(ruta_cli):
+                continue
+            hay_carpetas = True
+            if not os.path.exists(os.path.join(ruta_cli, _MARCADOR_ENVIADO)):
+                clientes.setdefault(cli, []).append(ruta_cli)
+
+    if not clientes:
         pendiente = any(os.path.exists(os.path.join(carpeta_local, f)) for f in ("Reporte_Entregas.html", "Reporte_Retiros.html"))
         if pendiente:
             messagebox.showwarning("Lote Incompleto", "Hay equipos pendientes.\n\nPresiona '📦 EMPACAR LOTE' antes de enviar a la red.")
+        elif hay_carpetas:
+            messagebox.showinfo("Nada nuevo por enviar", "Todas las carpetas empacadas ya fueron enviadas a la red.")
         else:
             messagebox.showwarning("Aviso", "No hay carpetas de clientes empacadas para enviar.")
         return
@@ -1431,7 +1677,7 @@ def accion_enviar_red(ventana):
         messagebox.showerror("Error de Red", f"No se pudo acceder al servidor:\n{CARPETA_DESTINO}\n\nVerifica tu conexión VPN o Wi-Fi.")
         return
 
-    respuesta = messagebox.askyesno("Confirmar Envío", f"¿Deseas enviar las {len(carpetas)} carpetas de clientes al servidor?\n\nDestino: {CARPETA_DESTINO}")
+    respuesta = messagebox.askyesno("Confirmar Envío", f"¿Deseas enviar las {len(clientes)} carpetas de clientes al servidor?\n\nDestino: {CARPETA_DESTINO}")
     if not respuesta:
         return
 
@@ -1450,18 +1696,26 @@ def accion_enviar_red(ventana):
     def tarea_envio():
         errores = 0
         enviados = 0
-        
-        for cliente_folder in carpetas:
-            ruta_origen = os.path.join(carpeta_local, cliente_folder)
-            ruta_destino = os.path.join(CARPETA_DESTINO, cliente_folder)
 
-            try:
-                # dirs_exist_ok=True es vital: mezcla el contenido si el cliente ya existía en el NAS
-                shutil.copytree(ruta_origen, ruta_destino, dirs_exist_ok=True)
+        for cliente_folder, rutas_origen in clientes.items():
+            ruta_destino = os.path.join(CARPETA_DESTINO, cliente_folder)
+            ok = True
+            for ruta_origen in rutas_origen:
+                try:
+                    # dirs_exist_ok=True es vital: mezcla entregas + retiros del
+                    # cliente y respeta lo que ya existía en el NAS.
+                    shutil.copytree(ruta_origen, ruta_destino, dirs_exist_ok=True)
+                    # Marcar DESPUÉS de copiar: así el marcador queda solo local
+                    # y no se sube al NAS. Evita reenviar esta carpeta.
+                    with open(os.path.join(ruta_origen, _MARCADOR_ENVIADO), "w", encoding="utf-8") as mf:
+                        mf.write(datetime.now().isoformat())
+                except Exception as e:
+                    ok = False
+                    print(f"Error copiando {cliente_folder}: {e}")
+            if ok:
                 enviados += 1
-            except Exception as e:
+            else:
                 errores += 1
-                print(f"Error copiando {cliente_folder}: {e}")
 
         # Una vez terminado, avisamos a la interfaz gráfica principal
         ventana.after(0, finalizar_envio, enviados, errores)
@@ -2716,8 +2970,40 @@ def mostrar_menu_principal(ventana):
     ventana.geometry("520x650")
 
     titulo_ui(
-        ventana, "🖥️ Sistema de Control de Inventario", size=16, pady=(30, 20)
+        ventana, "🖥️ Sistema de Control de Inventario", size=16, pady=(30, 10)
     )
+
+    # Aviso de equipos pendientes de empacar (evita mezclar clientes en un lote).
+    ent_pend, ret_pend = contar_pendientes()
+    total_pend = ent_pend + ret_pend
+    if total_pend:
+        detalle = []
+        if ent_pend:
+            detalle.append(f"{ent_pend} entrega" + ("s" if ent_pend != 1 else ""))
+        if ret_pend:
+            detalle.append(f"{ret_pend} retiro" + ("s" if ret_pend != 1 else ""))
+        tk.Label(
+            ventana,
+            text=(
+                f"⚠️  {total_pend} equipo(s) pendiente(s) de empacar  "
+                f"({', '.join(detalle)})\nRecuerda EMPACAR antes de escanear otro cliente."
+            ),
+            font=fuente(9, True),
+            bg="#fef3c7",
+            fg="#92400e",
+            justify="center",
+            padx=12,
+            pady=8,
+        ).pack(fill="x", padx=40, pady=(0, 12))
+    else:
+        tk.Label(
+            ventana,
+            text="✓ Sin equipos pendientes de empacar",
+            font=fuente(9),
+            bg=COLORS["fondo"],
+            fg=COLORS["gris"],
+        ).pack(pady=(0, 10))
+
     frame_btns = tk.Frame(ventana, bg=COLORS["fondo"])
     frame_btns.pack(fill="both", expand=True, padx=40)
 
@@ -2891,11 +3177,12 @@ def construir_ui_formulario(ventana, data):
     combo_mov.set("Entrega")
     combo_mov.grid(row=0, column=1, padx=6, pady=6, sticky="w")
 
-    tk.Label(
-        frame_log_int, text="N° de Guía:", bg=COLORS["fondo"], font=("Segoe UI", 9)
-    ).grid(row=0, column=2, padx=8, sticky="e")
+    lbl_guia = tk.Label(
+        frame_log_int, text="ID Orden Entrega:", bg=COLORS["fondo"], font=("Segoe UI", 9)
+    )
+    lbl_guia.grid(row=0, column=2, padx=8, sticky="e")
     entry_guia = tk.Entry(
-        frame_log_int, width=13, font=("Segoe UI", 9), state=tk.DISABLED, fg="#aaa"
+        frame_log_int, width=16, font=("Segoe UI", 9), fg="#000"
     )
     entry_guia.grid(row=0, column=3, padx=6, pady=6, sticky="w")
 
@@ -2970,24 +3257,27 @@ def construir_ui_formulario(ventana, data):
         comps_data.append({"nombre": comp_name, "estado": cmb_estado, "obs": ent_obs})
 
     def toggle_guia(event=None):
-        if combo_mov.get() == "Retiro":
-            entry_guia.config(state=tk.NORMAL, fg="#000")
+        mov_actual = combo_mov.get()
+        entry_guia.config(state=tk.NORMAL, fg="#000")
+        if mov_actual == "Retiro":
+            lbl_guia.config(text="N° de Guía:")
             lf_fallas.pack(fill="x", pady=(0, 10))
-            guia_guardada = cargar_guia_config()
-            if guia_guardada:
-                entry_guia.delete(0, tk.END)
-                entry_guia.insert(0, guia_guardada)
         else:
-            entry_guia.delete(0, tk.END)
-            entry_guia.config(state=tk.DISABLED, fg="#aaa")
+            lbl_guia.config(text="ID Orden Entrega:")
             lf_fallas.pack_forget()
             for c in comps_data:
                 c["estado"].set("OK")
                 c["obs"].config(state=tk.NORMAL)
                 c["obs"].delete(0, tk.END)
                 c["obs"].config(state=tk.DISABLED, bg="#f1f5f9")
+        # Reponer el ID/guía recordado del lote para este tipo de movimiento.
+        recordado = cargar_guia_config(mov_actual)
+        entry_guia.delete(0, tk.END)
+        if recordado:
+            entry_guia.insert(0, recordado)
 
     combo_mov.bind("<<ComboboxSelected>>", toggle_guia)
+    toggle_guia()  # Estado inicial acorde al movimiento por defecto (Entrega).
 
     tk.Label(
         marco,

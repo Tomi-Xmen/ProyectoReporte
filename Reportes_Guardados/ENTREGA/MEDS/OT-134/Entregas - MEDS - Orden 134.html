@@ -122,7 +122,7 @@ function extraerDatos(eq){
   let model  = eq.querySelector('.model-name').innerText.trim();
   let serial = eq.querySelector('.serial-tag').innerText.trim();
   let tds=eq.querySelectorAll('th,td');
-  let obs="",cpu="",office="",guia="",mov="",ramSpeed="",ramTech="PC4",fallas="",Manufacturer="",Partnumber="Desconocida",ot="";
+  let obs="",cpu="",office="",guia="",mov="",ramSpeed="",ramTech="PC4",fallas="",Manufacturer="",Partnumber="Desconocida",ot="",transf="";
   let totalRam=0,ramArr=[],discos=[],tempDesc="";
 
   for(let i=0;i<tds.length;i++){
@@ -138,6 +138,8 @@ function extraerDatos(eq){
     if(t.includes('Office'))      office =tds[i+1].innerText.trim();
     if(t==='Discos Internos')     tempDesc=tds[i+1].innerText.trim();
     if(t==='Serie Disco Duro')    discos.push({desc:tempDesc,serial:tds[i+1].innerText.trim()});
+    /* includes y no ===: el th lleva el emoji 🔌 adelante. */
+    if(t.includes('Serie Transformador')) transf=tds[i+1].innerText.trim();
     if(t==='Módulo RAM'){
       let p=tds[i+1].innerText.split('|');
       let n=parseInt(p[0].replace(/\D/g,''));
@@ -160,7 +162,7 @@ function extraerDatos(eq){
   if(obs&&obs!=="Sin observaciones")specs+=", OBS: "+obs;
   if(fallas&&fallas!=="Ninguna")specs+=", FALLAS: "+fallas;
 
-  return {model,serial,cpu,obs,office,guia,mov,discos,specs,equipoFull:model+" "+cpu, fallas, Manufacturer, Partnumber, ot};
+  return {model,serial,cpu,obs,office,guia,mov,discos,specs,equipoFull:model+" "+cpu, fallas, Manufacturer, Partnumber, ot, transf};
 }
 
 function copiarFilas(){
@@ -172,7 +174,8 @@ function copiarFilas(){
       let lbl=dk.desc.toUpperCase().includes("HDD")?"HDD":"SSD";
       txt+=`${lbl}\t${dk.desc}\t${dk.serial}\n`;
     });
-    if(d.office&&d.office.includes('Key:')){
+    if(d.transf) txt+=`TRANSFORMADOR\tTRANSFORMADOR ${d.model}\t${d.transf}\n`;
+    if(d.office){
       let ver=(d.office.match(/Office\s+([A-Za-z0-9]+)/)||[])[1]||"2016";
       let key=(d.office.match(/Key:\s*([^)]+)/)||[])[1]||"";
       txt+=`OFFICE ${ver}\tHOME AND BUSINESS\t${key.trim()}\n`;
@@ -217,7 +220,8 @@ function exportarValidaCSV(){
       let lbl=dk.desc.toUpperCase().includes("HDD")?"HDD":"SSD";
       csv+=`"${d.mov}";"${d.guia}";"${lbl}";"${dk.desc}";"${dk.serial}";""\n`;
     });
-    if(d.office&&d.office.includes('Key:')){
+    if(d.transf) csv+=`"${d.mov}";"${d.guia}";"TRANSFORMADOR";"TRANSFORMADOR ${d.model}";"${d.transf}";""\n`;
+    if(d.office){
       let ver=(d.office.match(/Office\s+([A-Za-z0-9]+)/)||[])[1]||"2016";
       let key=(d.office.match(/Key:\s*([^)]+)/)||[])[1]||"";
       csv+=`"${d.mov}";"${d.guia}";"OFFICE ${ver}";"HOME AND BUSINESS";"${key.trim()}";""\n`;
@@ -243,7 +247,7 @@ function resumenFusionadoDesdeDOM(eq){
     SERIAL: val('.serial-tag'),
     SN_Win: val('.win-key'),
     SN_HDD: hdd.join("_")||"PENDIENTE",
-    SN_Transf: "PENDIENTE",
+    SN_Transf: val('.transf-tag')||"PENDIENTE",
     SN_APP: key||null,
     OBS: (obs&&obs!=="Sin observaciones")?obs:null
   };

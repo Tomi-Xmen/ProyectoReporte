@@ -1,0 +1,26 @@
+[
+    {
+        "SERIAL": "EQ001",
+        "SN_Win": "WINKEY",
+        "SN_HDD": "D1",
+        "SN_Transf": "PENDIENTE",
+        "SN_APP": null,
+        "OBS": null
+    },
+    {
+        "SERIAL": "EQ002",
+        "SN_Win": "WINKEY",
+        "SN_HDD": "D2",
+        "SN_Transf": "PENDIENTE",
+        "SN_APP": null,
+        "OBS": null
+    },
+    {
+        "SERIAL": "EQ003",
+        "SN_Win": "WINKEY",
+        "SN_HDD": "D3",
+        "SN_Transf": "PENDIENTE",
+        "SN_APP": null,
+        "OBS": null
+    }
+]

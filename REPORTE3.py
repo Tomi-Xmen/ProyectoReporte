@@ -40,6 +40,7 @@ construir_entry_html; no se debe alterar sin querer cambiar el reporte.
 
 import html  # Para escapar strings en el HTML
 import json
+from logging import root
 import os
 import re
 import shutil
@@ -449,7 +450,7 @@ function extraerDatos(eq){
   let model  = eq.querySelector('.model-name').innerText.trim();
   let serial = eq.querySelector('.serial-tag').innerText.trim();
   let tds=eq.querySelectorAll('th,td');
-  let obs="",cpu="",office="",guia="",mov="",ramSpeed="",ramTech="PC4",fallas="",Manufacturer="",Partnumber="Desconocida";
+  let obs="",cpu="",office="",guia="",mov="",ramSpeed="",ramTech="PC4",fallas="",Manufacturer="",Partnumber="Desconocida",ot="",transf="";
   let totalRam=0,ramArr=[],discos=[],tempDesc="";
 
   for(let i=0;i<tds.length;i++){
@@ -457,6 +458,7 @@ function extraerDatos(eq){
 
     let t=tds[i].innerText.trim();
     if(t==='N° de Guía')          guia   =tds[i+1].innerText.trim();
+    if(t==='N° de OT')            ot     =tds[i+1].innerText.trim();
     if(t==='Tipo Movimiento')     mov    =tds[i+1].innerText.trim();
     if(t.includes('Obs. General'))obs    =tds[i+1].innerText.trim();
     if(t==='Fallas Detectadas')   fallas =tds[i+1].innerText.trim();
@@ -464,6 +466,8 @@ function extraerDatos(eq){
     if(t.includes('Office'))      office =tds[i+1].innerText.trim();
     if(t==='Discos Internos')     tempDesc=tds[i+1].innerText.trim();
     if(t==='Serie Disco Duro')    discos.push({desc:tempDesc,serial:tds[i+1].innerText.trim()});
+    /* includes y no ===: el th lleva el emoji 🔌 adelante. */
+    if(t.includes('Serie Transformador')) transf=tds[i+1].innerText.trim();
     if(t==='Módulo RAM'){
       let p=tds[i+1].innerText.split('|');
       let n=parseInt(p[0].replace(/\D/g,''));
@@ -486,7 +490,7 @@ function extraerDatos(eq){
   if(obs&&obs!=="Sin observaciones")specs+=", OBS: "+obs;
   if(fallas&&fallas!=="Ninguna")specs+=", FALLAS: "+fallas;
 
-  return {model,serial,cpu,obs,office,guia,mov,discos,specs,equipoFull:model+" "+cpu, fallas, Manufacturer, Partnumber};
+  return {model,serial,cpu,obs,office,guia,mov,discos,specs,equipoFull:model+" "+cpu, fallas, Manufacturer, Partnumber, ot, transf};
 }
 
 function copiarFilas(){
@@ -498,7 +502,8 @@ function copiarFilas(){
       let lbl=dk.desc.toUpperCase().includes("HDD")?"HDD":"SSD";
       txt+=`${lbl}\t${dk.desc}\t${dk.serial}\n`;
     });
-    if(d.office&&d.office.includes('Key:')){
+    if(d.transf) txt+=`TRANSFORMADOR\tTRANSFORMADOR ${d.model}\t${d.transf}\n`;
+    if(d.office){
       let ver=(d.office.match(/Office\s+([A-Za-z0-9]+)/)||[])[1]||"2016";
       let key=(d.office.match(/Key:\s*([^)]+)/)||[])[1]||"";
       txt+=`OFFICE ${ver}\tHOME AND BUSINESS\t${key.trim()}\n`;
@@ -543,7 +548,8 @@ function exportarValidaCSV(){
       let lbl=dk.desc.toUpperCase().includes("HDD")?"HDD":"SSD";
       csv+=`"${d.mov}";"${d.guia}";"${lbl}";"${dk.desc}";"${dk.serial}";""\n`;
     });
-    if(d.office&&d.office.includes('Key:')){
+    if(d.transf) csv+=`"${d.mov}";"${d.guia}";"TRANSFORMADOR";"TRANSFORMADOR ${d.model}";"${d.transf}";""\n`;
+    if(d.office){
       let ver=(d.office.match(/Office\s+([A-Za-z0-9]+)/)||[])[1]||"2016";
       let key=(d.office.match(/Key:\s*([^)]+)/)||[])[1]||"";
       csv+=`"${d.mov}";"${d.guia}";"OFFICE ${ver}";"HOME AND BUSINESS";"${key.trim()}";""\n`;
@@ -569,7 +575,7 @@ function resumenFusionadoDesdeDOM(eq){
     SERIAL: val('.serial-tag'),
     SN_Win: val('.win-key'),
     SN_HDD: hdd.join("_")||"PENDIENTE",
-    SN_Transf: "PENDIENTE",
+    SN_Transf: val('.transf-tag')||"PENDIENTE",
     SN_APP: key||null,
     OBS: (obs&&obs!=="Sin observaciones")?obs:null
   };
@@ -1133,6 +1139,8 @@ _MOV_CFG = {
         "prefijo": "OT",  # carpeta del lote: OT-553
         "etiqueta_id": "Orden",  # rótulo del ID en el nombre del HTML
         "etiqueta_campo": "N° de Orden de Trabajo (OT)",
+        # El otro documento del lote, el que NO da nombre a la carpeta.
+        "etiqueta_campo_sec": "N° de Guía de Despacho",
     },
     "Retiro": {
         "tipo_doc": "Retiros",
@@ -1140,6 +1148,7 @@ _MOV_CFG = {
         "prefijo": "GUIA",
         "etiqueta_id": "Guia",
         "etiqueta_campo": "N° de Guía de Retiro",
+        "etiqueta_campo_sec": "N° de Orden de Trabajo (OT)",
     },
 }
 
@@ -1154,6 +1163,13 @@ _MARCADOR_ENVIADO = ".enviado"
 
 # Puntero al lote activo (el que recibe los equipos escaneados).
 _ARCHIVO_LOTE_ACTIVO = ".lote_activo.json"
+
+# Metadatos guardados DENTRO de la carpeta del lote. Existen porque la ruta
+# codifica un solo número (el que nombra la carpeta) y el segundo documento
+# —la guía de una entrega, la OT de un retiro— no se puede deducir de ella.
+# Sin extensión .json a propósito: contar_equipos() cuenta los .json sueltos
+# de la carpeta y este archivo no es un equipo.
+_ARCHIVO_META_LOTE = ".lote"
 
 _RESERVADOS_WIN = {
     "CON", "PRN", "AUX", "NUL",
@@ -1192,14 +1208,58 @@ def ruta_lote(mov, cliente, numero):
     )
 
 
-def hacer_lote(mov, cliente, numero, ruta=None):
-    """Descriptor de lote que circula por toda la app."""
+def hacer_lote(mov, cliente, numero, ruta=None, numero_sec=""):
+    """
+    Descriptor de lote que circula por toda la app.
+
+    'numero' es el documento que identifica el lote y da nombre a la carpeta:
+    la OT en una entrega, la guía en un retiro. 'numero_sec' es el OTRO
+    documento, el que la ruta no codifica; puede ir vacío si aún no se conoce.
+    """
     return {
         "mov": mov,
         "cliente": cliente,
         "numero": numero,
+        "numero_sec": (numero_sec or "").strip(),
         "ruta": ruta or ruta_lote(mov, cliente, numero),
     }
+
+
+def numeros_lote(lote):
+    """
+    (OT, guía) del lote como par explícito. Cuál de los dos nombra la carpeta
+    depende del movimiento: una entrega se archiva por OT y un retiro por guía,
+    así que el otro sale de 'numero_sec' y puede no estar cargado todavía.
+    """
+    otro = (lote.get("numero_sec") or "").strip()
+    if lote["mov"] == "Entrega":
+        return lote["numero"], otro or "Sin Guía"
+    return otro or "Sin Orden", lote["numero"]
+
+
+def guardar_meta_lote(lote):
+    """Deja en la carpeta del lote el número que la ruta no puede codificar."""
+    try:
+        os.makedirs(lote["ruta"], exist_ok=True)
+        ruta = os.path.join(lote["ruta"], _ARCHIVO_META_LOTE)
+        with open(ruta, "w", encoding="utf-8") as f:
+            json.dump({"numero_sec": lote.get("numero_sec", "")}, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def leer_meta_lote(ruta):
+    """Metadatos del lote guardados en su carpeta. {} si no hay o no se pudo."""
+    try:
+        with open(os.path.join(ruta, _ARCHIVO_META_LOTE), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _numero_sec_en_disco(ruta):
+    return (leer_meta_lote(ruta).get("numero_sec") or "").strip()
 
 
 def etiqueta_lote(lote):
@@ -1238,6 +1298,7 @@ def marcar_cerrado(lote, equipos):
         "cliente": lote["cliente"],
         "movimiento": lote["mov"],
         "numero": lote["numero"],
+        "numero_sec": lote.get("numero_sec", ""),
         "equipos": equipos,
         "cerrado": datetime.now().isoformat(timespec="seconds"),
     }
@@ -1275,8 +1336,9 @@ def contar_equipos(ruta):
 
 def listar_lotes_abiertos():
     """
-    Lotes SIN '.cerrado', ordenados por actividad reciente. Solo hace stat de
-    carpetas: nunca abre archivos de las OT ya cerradas, que son la mayoría.
+    Lotes SIN '.cerrado', ordenados por actividad reciente. De las OT cerradas
+    —que son la mayoría— no abre ningún archivo: solo hace stat de la carpeta.
+    De las abiertas lee además su '.lote', que trae el número secundario.
     """
     base = ruta_reportes()
     abiertos = []
@@ -1297,7 +1359,13 @@ def listar_lotes_abiertos():
                             numero = (
                                 l.name[len(pref):] if l.name.startswith(pref) else l.name
                             )
-                            lote = hacer_lote(mov, c.name, numero, ruta=l.path)
+                            lote = hacer_lote(
+                                mov,
+                                c.name,
+                                numero,
+                                ruta=l.path,
+                                numero_sec=_numero_sec_en_disco(l.path),
+                            )
                             lote["equipos"] = contar_equipos(l.path)
                             lote["modificado"] = os.path.getmtime(l.path)
                             abiertos.append(lote)
@@ -1316,7 +1384,9 @@ def guardar_lote_activo(lote):
         os.path.join(ruta_reportes(), _ARCHIVO_LOTE_ACTIVO), "w", encoding="utf-8"
     ) as f:
         json.dump(
-            {k: lote[k] for k in ("mov", "cliente", "numero")}, f, ensure_ascii=False
+            {k: lote.get(k, "") for k in ("mov", "cliente", "numero", "numero_sec")},
+            f,
+            ensure_ascii=False,
         )
 
 
@@ -1330,11 +1400,20 @@ def cargar_lote_activo():
             os.path.join(ruta_reportes(), _ARCHIVO_LOTE_ACTIVO), "r", encoding="utf-8"
         ) as f:
             cfg = json.load(f)
-        lote = hacer_lote(cfg["mov"], cfg["cliente"], cfg["numero"])
+        lote = hacer_lote(
+            cfg["mov"],
+            cfg["cliente"],
+            cfg["numero"],
+            numero_sec=cfg.get("numero_sec", ""),
+        )
     except Exception:
         return None
     if not os.path.isdir(lote["ruta"]) or esta_cerrado(lote["ruta"]):
         return None
+    # Punteros escritos por versiones anteriores no traen el número secundario:
+    # se recupera del '.lote' de la carpeta en vez de darlo por perdido.
+    if not lote["numero_sec"]:
+        lote["numero_sec"] = _numero_sec_en_disco(lote["ruta"])
     return lote
 
 
@@ -1391,8 +1470,14 @@ def _clave_orden(jdata):
         return ""
 
 
-def leer_equipos_lote(lote):
-    """JSON individuales del lote, del más reciente al más antiguo."""
+def leer_equipos_lote_con_ruta(lote):
+    """
+    (ruta, jdata) de cada equipo del lote, del más reciente al más antiguo.
+
+    La ruta real importa cuando hay que REESCRIBIR el JSON: los registros
+    viejos pueden tener un nombre que ruta_json_equipo() ya no genera, y
+    recalcularlo crearía un archivo nuevo en vez de actualizar el que existe.
+    """
     equipos = []
     try:
         archivos = os.listdir(lote["ruta"])
@@ -1401,15 +1486,21 @@ def leer_equipos_lote(lote):
     for archivo in archivos:
         if not archivo.endswith(".json") or archivo.endswith("_FUSIONADO.json"):
             continue
+        ruta = os.path.join(lote["ruta"], archivo)
         try:
-            with open(os.path.join(lote["ruta"], archivo), "r", encoding="utf-8") as f:
+            with open(ruta, "r", encoding="utf-8") as f:
                 jdata = json.load(f)
             if isinstance(jdata, dict) and "SERIAL" in jdata:
-                equipos.append(jdata)
+                equipos.append((ruta, jdata))
         except Exception:
             continue
-    equipos.sort(key=_clave_orden, reverse=True)
+    equipos.sort(key=lambda par: _clave_orden(par[1]), reverse=True)
     return equipos
+
+
+def leer_equipos_lote(lote):
+    """JSON individuales del lote, del más reciente al más antiguo."""
+    return [jdata for _, jdata in leer_equipos_lote_con_ruta(lote)]
 
 
 def regenerar_lote(lote):
@@ -1463,6 +1554,7 @@ def marcar_pendiente_envio(lote):
 def guardar_registro_en_lote(lote, registro):
     """Escribe el JSON del equipo y regenera los derivados. Devuelve el total."""
     os.makedirs(lote["ruta"], exist_ok=True)
+    guardar_meta_lote(lote)
     with open(ruta_json_equipo(lote, registro["SERIAL"]), "w", encoding="utf-8") as f:
         json.dump(registro, f, ensure_ascii=False, indent=4)
     marcar_pendiente_envio(lote)
@@ -1490,6 +1582,8 @@ def migrar_legacy_a_lote(rutas, lote):
     cliente/número del lote y regenera HTML y FUSIONADO. Devuelve cuántos entraron.
     """
     os.makedirs(lote["ruta"], exist_ok=True)
+    guardar_meta_lote(lote)
+    num_ot, num_guia = numeros_lote(lote)
     migrados = 0
     for ruta in rutas:
         try:
@@ -1497,7 +1591,8 @@ def migrar_legacy_a_lote(rutas, lote):
                 jdata = json.load(f)
             jdata["CLIENTE"] = lote["cliente"]
             jdata["TIPO_MOVIMIENTO"] = lote["mov"]
-            jdata["GUIA_ID"] = lote["numero"]
+            jdata["GUIA_ID"] = num_guia
+            jdata["OT_ID"] = num_ot
             destino = ruta_json_equipo(lote, jdata.get("SERIAL", ""))
             with open(destino, "w", encoding="utf-8") as f:
                 json.dump(jdata, f, ensure_ascii=False, indent=4)
@@ -1558,6 +1653,7 @@ def construir_entry_html(
     cpu,
     mov,
     guia_final,
+    num_ot,
     obs_final,
     ram_html,
     disk_html,
@@ -1569,6 +1665,7 @@ def construir_entry_html(
     btn_imprimir="",
     office_html="",
     bateria_html="",
+    transf_html="",
 ):
     return f"""<details id="{safe_id}" data-comps='{comps_json}' data-fusion='{fusion_json}' open>
 <summary>
@@ -1583,13 +1680,14 @@ def construir_entry_html(
   <table>
     <tr class="logistics-row"><th>Tipo Movimiento</th><td><b>{mov}</b></td></tr>
     <tr class="logistics-row"><th>N° de Guía</th><td><b>{guia_final}</b></td></tr>
+    <tr class="logistics-row"><th>N° de OT</th><td><b>{num_ot}</b></td></tr>
     {falla_html}
     <tr class="obs-row"><th>⚠️ Obs. General</th><td>{obs_final}</td></tr>
     {office_html}
     <tr><th>Número de Serie</th><td class="serial-tag">{serial}</td></tr>
     <tr><th>Licencia Windows (OA3)</th><td class="win-key">{key}</td></tr>
     <tr><th>Procesador</th><td>{cpu}</td></tr>{bateria_html}
-    {ram_html}{disk_html}{net_rows}
+    {ram_html}{disk_html}{transf_html}{net_rows}
   </table>
 </div></details>"""
 
@@ -1612,6 +1710,7 @@ def guardar_equipo_general(
     documento los aporta el lote, no el equipo. Devuelve el total del lote.
     """
     tiene_fallas = any(c["estado"] != "OK" for c in detalle_componentes)
+    num_ot, num_guia = numeros_lote(lote)
     sn_hdd = "_".join(data.get("disk_serials", [])) or "PENDIENTE"
     sn_app = (
         office_key.strip()
@@ -1628,7 +1727,8 @@ def guardar_equipo_general(
         "SN_APP": sn_app,
         "MODELO": data["model"],
         "TIPO_MOVIMIENTO": lote["mov"],
-        "GUIA_ID": lote["numero"],
+        "GUIA_ID": num_guia,
+        "OT_ID": num_ot,
         "OBS": obs or "Sin observaciones",
         "DETALLE_COMPONENTES": detalle_componentes,
         "TIENE_FALLAS": tiene_fallas,
@@ -1817,11 +1917,13 @@ def _normalizar_cliente(valor):
 
 def dialogo_nuevo_lote(ventana, mov_sugerido="Entrega"):
     """
-    Crea (o reabre) un lote: cliente + movimiento + numero de OT/guia.
+    Crea (o reabre) un lote: cliente + movimiento + sus dos documentos, la OT
+    y la guia. El que nombra la carpeta es obligatorio y depende del
+    movimiento; el otro es opcional y se puede completar despues.
     Devuelve el lote listo para recibir equipos, o None si se cancela.
     """
     existentes = _clientes_existentes()
-    win = ventana_modal(ventana, "Nueva OT / Guia", "480x360")
+    win = ventana_modal(ventana, "Nueva OT / Guia", "480x430")
     resultado = {"lote": None}
 
     titulo_ui(
@@ -1859,6 +1961,20 @@ def dialogo_nuevo_lote(ventana, mov_sugerido="Entrega"):
     entry_num = tk.Entry(frm, font=fuente(11), width=28)
     entry_num.grid(row=2, column=1, padx=6, pady=5)
 
+    # El segundo documento del lote. Es opcional: muchas veces se conoce la OT
+    # antes que la guía (o al revés) y no puede frenar la creación del lote.
+    lbl_sec = tk.Label(frm, text="N° de Guía:", font=fuente(10, True), bg=COLORS["fondo"])
+    lbl_sec.grid(row=3, column=0, sticky="e", padx=6, pady=5)
+    entry_sec = tk.Entry(frm, font=fuente(11), width=28)
+    entry_sec.grid(row=3, column=1, padx=6, pady=5)
+    tk.Label(
+        frm,
+        text="(opcional, se puede completar después)",
+        font=fuente(8),
+        bg=COLORS["fondo"],
+        fg=COLORS["gris"],
+    ).grid(row=4, column=1, sticky="w", padx=6)
+
     lbl_prev = tk.Label(
         win, text="", font=fuente(9, True), bg=COLORS["fondo"], fg=COLORS["azul"]
     )
@@ -1866,7 +1982,11 @@ def dialogo_nuevo_lote(ventana, mov_sugerido="Entrega"):
 
     def refrescar(event=None):
         mov = combo_mov.get()
-        lbl_num.config(text="N° de OT:" if mov == "Entrega" else "N° de Guía:")
+        # El número que nombra la carpeta cambia con el movimiento: la entrega
+        # se archiva por OT y el retiro por guía. El otro campo es el opuesto.
+        es_entrega = mov == "Entrega"
+        lbl_num.config(text="N° de OT:" if es_entrega else "N° de Guía:")
+        lbl_sec.config(text="N° de Guía:" if es_entrega else "N° de OT:")
         numero = normalizar_numero(entry_num.get(), mov)
         cliente = _normalizar_cliente(combo_cli.get()) if combo_cli.get().strip() else ""
         if numero and cliente:
@@ -1899,7 +2019,12 @@ def dialogo_nuevo_lote(ventana, mov_sugerido="Entrega"):
             )
             return
 
-        lote = hacer_lote(mov, _normalizar_cliente(combo_cli.get()), numero)
+        lote = hacer_lote(
+            mov,
+            _normalizar_cliente(combo_cli.get()),
+            numero,
+            numero_sec=normalizar_numero(entry_sec.get(), mov),
+        )
 
         # Reabrir una OT ya cerrada es posible, pero nunca en silencio.
         if esta_cerrado(lote["ruta"]):
@@ -1916,10 +2041,16 @@ def dialogo_nuevo_lote(ventana, mov_sugerido="Entrega"):
             reabrir_lote(lote)
 
         os.makedirs(lote["ruta"], exist_ok=True)
+        # Si el lote ya existía y no se escribió el segundo número, se conserva
+        # el que tenga la carpeta en vez de borrarlo por dejar el campo vacío.
+        if not lote["numero_sec"]:
+            lote["numero_sec"] = _numero_sec_en_disco(lote["ruta"])
+        guardar_meta_lote(lote)
         resultado["lote"] = lote
         win.destroy()
 
     entry_num.bind("<Return>", confirmar)
+    entry_sec.bind("<Return>", confirmar)
 
     frame_bts = tk.Frame(win, bg=COLORS["fondo"])
     frame_bts.pack(pady=16)
@@ -2183,7 +2314,7 @@ def accion_enviar_red(ventana):
     win_carga.geometry("350x150")
     win_carga.configure(bg=COLORS["fondo"])
     win_carga.grab_set() # Bloquea la ventana principal para evitar que sigan usando el programa
-    
+
     tk.Label(win_carga, text="🚀", font=("Segoe UI", 24), bg=COLORS["fondo"]).pack(pady=(15, 5))
     tk.Label(win_carga, text="Copiando archivos a la red...", font=("Segoe UI", 10, "bold"), bg=COLORS["fondo"], fg=COLORS["azul"]).pack()
     tk.Label(win_carga, text="Por favor, no cierres el programa.", font=("Segoe UI", 9), bg=COLORS["fondo"], fg=COLORS["gris"]).pack()
@@ -2249,6 +2380,7 @@ def _reconstruir_entry_desde_json(jdata):
     data = jdata.get("DATA", {})
     obs_final = jdata.get("OBS", "Sin observaciones")
     guia_final = jdata.get("GUIA_ID", "Sin Guía")
+    ot = jdata.get("OT_ID", "Sin Orden")
     mov = jdata.get("TIPO_MOVIMIENTO", "Entrega")
     detalle_componentes = jdata.get("DETALLE_COMPONENTES", [])
     office_str = jdata.get("OFFICE", "No")
@@ -2301,6 +2433,17 @@ def _reconstruir_entry_desde_json(jdata):
         f'<td>{data.get("Battery", "No detectada")}</td></tr>'
     )
 
+    # El transformador se carga después del escaneo (módulo aparte), así que la
+    # fila solo aparece si ya tiene serial. Va al HTML porque el export a
+    # Valida (copiarFilas / CSV) lee del DOM, no de los JSON.
+    sn_transf = jdata.get("SN_Transf", _TRANSF_PENDIENTE)
+    transf_html = ""
+    if sn_transf and sn_transf != _TRANSF_PENDIENTE:
+        transf_html = (
+            f'\n    <tr><th>🔌 Serie Transformador</th>'
+            f'<td class="transf-tag">{sn_transf}</td></tr>'
+        )
+
     return construir_entry_html(
         safe_id=safe_id,
         model=data.get("model", "Desconocido"),
@@ -2309,6 +2452,7 @@ def _reconstruir_entry_desde_json(jdata):
         key=data.get("key", "N/A"),
         cpu=data.get("cpu", "Desconocido"),
         mov=mov,
+        num_ot=ot,
         guia_final=guia_final,
         obs_final=obs_final,
         ram_html=ram_html,
@@ -2321,6 +2465,7 @@ def _reconstruir_entry_desde_json(jdata):
         btn_imprimir=btn_imprimir,
         office_html=office_html,
         bateria_html=bateria_html,
+        transf_html=transf_html,
     )
 
 
@@ -2338,7 +2483,13 @@ def _lote_desde_ruta(ruta):
     for mov, cfg in _MOV_CFG.items():
         pref = cfg["prefijo"] + "-"
         if grupo == cfg["grupo"] and nombre.startswith(pref) and cliente:
-            return hacer_lote(mov, cliente, nombre[len(pref):], ruta=ruta)
+            return hacer_lote(
+                mov,
+                cliente,
+                nombre[len(pref):],
+                ruta=ruta,
+                numero_sec=_numero_sec_en_disco(ruta),
+            )
     return None
 
 
@@ -3333,7 +3484,7 @@ def abrir_modulo_etiquetas_manual(ventana_padre):
     # --- DATOS DEL EQUIPO ---
     frame_datos = ttk.LabelFrame(win, text=" Datos del Equipo ")
     frame_datos.pack(fill="x", padx=25, pady=5)
-    
+
     tk.Label(frame_datos, text="N° de Serie:", font=("Segoe UI", 9), bg=COLORS["fondo"]).grid(row=0, column=0, padx=10, pady=8, sticky="e")
     ent_serial = tk.Entry(frame_datos, width=25, font=("Segoe UI", 9))
     ent_serial.grid(row=0, column=1, padx=5, pady=8, sticky="w")
@@ -3350,12 +3501,16 @@ def abrir_modulo_etiquetas_manual(ventana_padre):
     ent_guia = tk.Entry(frame_datos, width=25, font=("Segoe UI", 9))
     ent_guia.grid(row=1, column=3, padx=5, pady=8, sticky="w")
 
+    tk.Label(frame_datos, text="N° de OT:", font=("Segoe UI", 9), bg=COLORS["fondo"]).grid(row=2, column=0, padx=10, pady=8, sticky="e")
+    ent_ot = tk.Entry(frame_datos, width=25, font=("Segoe UI", 9))
+    ent_ot.grid(row=2, column=1, padx=5, pady=8, sticky="w")
+
     # --- REVISIÓN DE COMPONENTES ---
     lf_fallas = ttk.LabelFrame(win, text=" Revisión de Componentes ")
     lf_fallas.pack(fill="both", expand=True, padx=25, pady=10)
 
     componentes_etiqueta = [
-        "Carcaza", "Pantalla", "Teclado", "Touchpad", "Puertos USB", 
+        "Carcaza", "Pantalla", "Teclado", "Touchpad", "Puertos USB",
         "Puertos Video", "Ethernet/Wi-Fi", "Placa base", "Memoria", "Disco duro", "Batería"
     ]
 
@@ -3370,7 +3525,7 @@ def abrir_modulo_etiquetas_manual(ventana_padre):
 
     for i, comp_name in enumerate(componentes_etiqueta, start=1):
         tk.Label(frame_grilla, text=comp_name, bg=COLORS["fondo"], font=("Segoe UI", 9)).grid(row=i, column=0, sticky="w", padx=5, pady=2)
-        
+
         cmb_estado = ttk.Combobox(frame_grilla, values=["OK", "OBS", "MALO"], width=6, state="readonly", font=("Segoe UI", 9))
         cmb_estado.set("OK")
         cmb_estado.grid(row=i, column=1, padx=5, pady=2)
@@ -3394,6 +3549,7 @@ def abrir_modulo_etiquetas_manual(ventana_padre):
         modelo = ent_modelo.get().strip() or "Desconocido"
         cpu = ent_cpu.get().strip() or "Desconocido"
         guia = ent_guia.get().strip() or "S/N"
+        ot = ent_ot.get().strip() or "S/N"
         fecha = datetime.now().strftime('%d/%m/%Y')
 
         trs = ""
@@ -3401,11 +3557,11 @@ def abrir_modulo_etiquetas_manual(ventana_padre):
             nombre = c["nombre"]
             estado = c["estado"].get()
             obs = c["obs"].get().strip()
-            
+
             iconOK = "☑" if estado == "OK" else "□"
             iconOBS = "☑" if estado == "OBS" else "□"
             iconMalo = "☑" if estado == "MALO" else "□"
-            
+
             trs += f"""<tr>
               <td>{nombre}</td>
               <td style="text-align: center;">{iconOK} OK &nbsp;&nbsp;&nbsp; {iconOBS} OBS &nbsp;&nbsp;&nbsp; {iconMalo} MALO</td>
@@ -3436,6 +3592,7 @@ def abrir_modulo_etiquetas_manual(ventana_padre):
             </div>
             <div class="row">
               <span><span class="bold">MODELO:</span> {modelo}</span>
+              <span><span class="bold">OT:</span> {ot}</span>
               <span><span class="bold">PROCESADOR:</span> {cpu}</span>
               <span><span class="bold">GUIA:</span> {guia}</span>
               <span><span class="bold">SERIAL:</span> {serial}</span>
@@ -3482,13 +3639,352 @@ def abrir_modulo_etiquetas_manual(ventana_padre):
         relief="flat"
     ).pack(pady=10)
 
+
+# ============================================================================
+#  Carga masiva de transformadores (cargadores) sobre los equipos de la OT
+# ============================================================================
+# El transformador se etiqueta aparte del equipo y casi nunca aparece en el
+# mismo momento: llega después y en bloque, como una columna de Excel o como
+# una ráfaga de la pistola. De ahí que sea su propio módulo y no un campo del
+# formulario de escaneo.
+#
+# La lista va en ORDEN DE ESCANEO (el más viejo arriba, al revés que el resto
+# de la app): es el orden en que se etiquetaron los equipos, así que es el que
+# trae la columna pegada y el pegado cae 1-a-1 sobre las filas.
+_TRANSF_PENDIENTE = "PENDIENTE"
+
+
+def _normalizar_sn_transf(valor):
+    """Serial de transformador utilizable, o '' si la celda quedó vacía."""
+    limpio = " ".join(str(valor or "").split())
+    return "" if limpio.upper() in ("", _TRANSF_PENDIENTE) else limpio
+
+
+def _seriales_del_portapapeles(texto):
+    """
+    Un serial por línea. Si la línea trae tabs (columna copiada de Excel con
+    celdas vecinas) se usa la primera celda no vacía: pegar una columna nunca
+    debe convertirse en varios transformadores para el mismo equipo.
+    """
+    seriales = []
+    for linea in texto.replace("\r", "\n").split("\n"):
+        celdas = (" ".join(c.split()) for c in linea.split("\t"))
+        celda = next((c for c in celdas if c), "")
+        if celda:
+            seriales.append(celda)
+    return seriales
+
+
+def abrir_modulo_agregar_transformador(ventana_padre):
+    # Los chequeos van ANTES de crear la ventana: abrir un modal para cerrarlo
+    # de inmediato hace parpadear la pantalla y roba el foco por un instante.
+    lote = cargar_lote_activo()
+    if not lote:
+        messagebox.showwarning(
+            "Sin OT activa",
+            "Los transformadores se asignan a los equipos de una OT.\n\n"
+            "Abrí o creá una OT antes de cargarlos.",
+            parent=ventana_padre,
+        )
+        return
+
+    registros = leer_equipos_lote_con_ruta(lote)[::-1]  # orden de escaneo
+    if not registros:
+        messagebox.showwarning(
+            "OT sin equipos",
+            f"{etiqueta_lote(lote)} todavía no tiene equipos escaneados.",
+            parent=ventana_padre,
+        )
+        return
+
+    win = ventana_modal(ventana_padre, "Asignar Transformadores", "780x640")
+    titulo_ui(win, "🔌 Asignar Transformadores", size=14, pady=(18, 2))
+    tk.Label(
+        win,
+        text=f"{etiqueta_lote(lote)}  ·  {len(registros)} equipo(s)",
+        font=fuente(9, True),
+        bg=COLORS["fondo"],
+        fg=COLORS["gris"],
+    ).pack()
+    tk.Label(
+        win,
+        text="Los equipos están en orden de escaneo. Pegá la columna de seriales "
+        "o escaneá con la pistola (Enter salta a la fila siguiente).",
+        font=fuente(8),
+        bg=COLORS["fondo"],
+        fg=COLORS["gris"],
+        wraplength=720,
+    ).pack(pady=(2, 8))
+
+    # --- Grilla scrolleable: una OT puede traer 50+ equipos ---
+    # Un Frame no scrollea solo; el truco estándar de Tk es meterlo dentro de
+    # un Canvas y mover el Canvas.
+    marco = tk.Frame(win, bg=COLORS["fondo"])
+    marco.pack(fill="both", expand=True, padx=18)
+
+    canvas = tk.Canvas(marco, bg=COLORS["fondo"], highlightthickness=0)
+    barra = tk.Scrollbar(marco, orient="vertical", command=canvas.yview)
+    canvas.configure(yscrollcommand=barra.set)
+    barra.pack(side="right", fill="y")
+    canvas.pack(side="left", fill="both", expand=True)
+
+    grilla = tk.Frame(canvas, bg=COLORS["fondo"])
+    ventana_interna = canvas.create_window((0, 0), window=grilla, anchor="nw")
+    grilla.bind(
+        "<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+    )
+    canvas.bind(
+        "<Configure>", lambda e: canvas.itemconfigure(ventana_interna, width=e.width)
+    )
+
+    # bind_all es global: se engancha al entrar y se suelta al salir para no
+    # dejar la rueda del mouse secuestrada cuando la ventana ya se cerró.
+    def _rueda(event):
+        canvas.yview_scroll(-1 * (event.delta // 120), "units")
+
+    canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _rueda))
+    canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+
+    for col, (txt, ancho) in enumerate(
+        (("#", 3), ("MODELO", 26), ("SERIAL EQUIPO", 20), ("SERIE TRANSFORMADOR", 24))
+    ):
+        tk.Label(
+            grilla,
+            text=txt,
+            width=ancho,
+            anchor="w",
+            font=fuente(8, True),
+            bg=COLORS["fondo"],
+            fg=COLORS["gris_oscuro"],
+        ).grid(row=0, column=col, padx=4, pady=(0, 4), sticky="w")
+
+    filas = []
+    for i, (ruta, jdata) in enumerate(registros, start=1):
+        data = jdata.get("DATA", {})
+        actual = jdata.get("SN_Transf", _TRANSF_PENDIENTE) or _TRANSF_PENDIENTE
+        fondo = COLORS["fondo"] if i % 2 else "#e3e9f2"
+
+        for col, txt in (
+            (0, str(i)),
+            (1, data.get("model", jdata.get("MODELO", "Desconocido"))),
+            (2, jdata.get("SERIAL", "?")),
+        ):
+            tk.Label(
+                grilla,
+                text=txt,
+                anchor="w",
+                font=fuente(9),
+                bg=fondo,
+                fg=COLORS["gris_oscuro"],
+            ).grid(row=i, column=col, padx=4, pady=1, sticky="we")
+
+        ent = tk.Entry(grilla, font=fuente(9), width=24)
+        ent.grid(row=i, column=3, padx=4, pady=1, sticky="w")
+        # Lo ya cargado se muestra: este módulo se usa varias veces sobre la
+        # misma OT, a medida que van llegando los cargadores.
+        if actual != _TRANSF_PENDIENTE:
+            ent.insert(0, actual)
+        filas.append({"ruta": ruta, "jdata": jdata, "entry": ent})
+
+    grilla.grid_columnconfigure(1, weight=1)
+
+    lbl_estado = tk.Label(
+        win, text="", font=fuente(9, True), bg=COLORS["fondo"], fg=COLORS["azul"]
+    )
+    lbl_estado.pack(pady=(8, 0))
+
+    def refrescar_estado():
+        cargados = sum(1 for f in filas if _normalizar_sn_transf(f["entry"].get()))
+        lbl_estado.config(
+            text=f"{cargados} de {len(filas)} equipo(s) con transformador"
+        )
+
+    # Enter = siguiente fila: la pistola manda Enter al final de cada lectura,
+    # así se escanea la OT completa sin tocar el mouse.
+    for idx, f in enumerate(filas):
+        siguiente = filas[idx + 1]["entry"] if idx + 1 < len(filas) else None
+
+        # sig se captura por default: sin eso, el closure se quedaría con la
+        # última fila del bucle y todos los Enter saltarían al mismo Entry.
+        def salto(event, sig=siguiente):
+            refrescar_estado()
+            if sig:
+                sig.focus_set()
+                canvas.yview_scroll(1, "units")
+            return "break"
+
+        f["entry"].bind("<Return>", salto)
+        f["entry"].bind("<FocusOut>", lambda e: refrescar_estado())
+
+    def pegar_portapapeles():
+        try:
+            crudo = win.clipboard_get()
+        except Exception:
+            messagebox.showwarning(
+                "Portapapeles vacío",
+                "No hay texto para pegar. Copiá primero la columna de seriales.",
+                parent=win,
+            )
+            return
+
+        seriales = _seriales_del_portapapeles(crudo)
+        if not seriales:
+            messagebox.showwarning(
+                "Nada que pegar",
+                "El portapapeles no trae ningún serial reconocible.",
+                parent=win,
+            )
+            return
+
+        # El pegado es posicional y sobrescribe desde la primera fila: si ya
+        # había datos cargados a mano, se avisa antes de taparlos.
+        if any(_normalizar_sn_transf(f["entry"].get()) for f in filas):
+            if not messagebox.askyesno(
+                "Sobrescribir",
+                "Ya hay transformadores cargados en la lista.\n\n"
+                f"Pegar reemplaza las primeras {min(len(seriales), len(filas))} "
+                "fila(s) en orden. ¿Continuar?",
+                parent=win,
+            ):
+                return
+
+        # zip corta por el más corto: si sobran seriales o sobran filas, no
+        # revienta ni desalinea, simplemente llega hasta donde alcanza.
+        for f, sn in zip(filas, seriales):
+            f["entry"].delete(0, tk.END)
+            f["entry"].insert(0, sn)
+        refrescar_estado()
+
+        if len(seriales) > len(filas):
+            messagebox.showwarning(
+                "Sobran seriales",
+                f"Pegaste {len(seriales)} seriales pero la OT tiene "
+                f"{len(filas)} equipos.\n\n"
+                f"Se usaron los primeros {len(filas)} y se descartó el resto.",
+                parent=win,
+            )
+
+    def limpiar():
+        if not messagebox.askyesno(
+            "Limpiar",
+            "¿Vaciar la columna de transformadores?\n\n"
+            "Todavía no se guarda nada: los JSON quedan como están hasta que "
+            "aprietes GUARDAR.",
+            parent=win,
+        ):
+            return
+        for f in filas:
+            f["entry"].delete(0, tk.END)
+        refrescar_estado()
+
+    def guardar():
+        cambios, vistos, duplicados = [], {}, []
+        for f in filas:
+            serial_eq = f["jdata"].get("SERIAL", "?")
+            nuevo = _normalizar_sn_transf(f["entry"].get()) or _TRANSF_PENDIENTE
+            if nuevo != _TRANSF_PENDIENTE:
+                clave = nuevo.upper()
+                if clave in vistos:
+                    duplicados.append(f"{nuevo} → {vistos[clave]} y {serial_eq}")
+                vistos[clave] = serial_eq
+            actual = f["jdata"].get("SN_Transf", _TRANSF_PENDIENTE) or _TRANSF_PENDIENTE
+            # Vaciar una celda es un cambio válido: devuelve el equipo a
+            # PENDIENTE cuando el transformador se cargó por error.
+            if nuevo != actual:
+                cambios.append((f, nuevo))
+
+        # Un transformador no puede estar en dos equipos: casi siempre es una
+        # columna pegada corrida una fila, así que conviene frenar y mirar.
+        if duplicados and not messagebox.askyesno(
+            "Transformadores repetidos",
+            "Estos seriales quedaron en más de un equipo:\n\n"
+            + "\n".join(duplicados[:8])
+            + "\n\n¿Guardar igual?",
+            parent=win,
+        ):
+            return
+
+        if not cambios:
+            messagebox.showinfo(
+                "Sin cambios", "No hay nada nuevo para guardar.", parent=win
+            )
+            return
+
+        errores = []
+        for f, nuevo in cambios:
+            # Se relee del disco por si el equipo se re-escaneó mientras esta
+            # ventana estaba abierta: así se pisa solo SN_Transf y no se
+            # revierte el resto del registro a como estaba al abrir.
+            try:
+                with open(f["ruta"], "r", encoding="utf-8") as fh:
+                    jdata = json.load(fh)
+                if not isinstance(jdata, dict):
+                    jdata = f["jdata"]
+            except Exception:
+                jdata = f["jdata"]
+            jdata["SN_Transf"] = nuevo
+            try:
+                with open(f["ruta"], "w", encoding="utf-8") as fh:
+                    json.dump(jdata, fh, ensure_ascii=False, indent=4)
+                f["jdata"] = jdata
+            except Exception as e:
+                errores.append(f"{jdata.get('SERIAL', '?')}: {e}")
+
+        marcar_pendiente_envio(lote)
+        regenerar_lote(lote)
+
+        if errores:
+            messagebox.showerror(
+                "Guardado parcial",
+                f"Se guardaron {len(cambios) - len(errores)} de {len(cambios)} "
+                "equipo(s).\n\nFallaron:\n" + "\n".join(errores[:8]),
+                parent=win,
+            )
+            return
+
+        messagebox.showinfo(
+            "✅ Transformadores guardados",
+            f"{len(cambios)} equipo(s) actualizado(s) en {etiqueta_lote(lote)}.\n\n"
+            "El HTML y el JSON FUSIONADO ya se regeneraron: los seriales salen "
+            "en 'Copiar Filas' y en el CSV de Valida.",
+            parent=win,
+        )
+        win.destroy()
+
+    barra_bts = tk.Frame(win, bg=COLORS["fondo"])
+    barra_bts.pack(pady=12)
+    for txt, cmd, color in (
+        ("📋 Pegar del portapapeles", pegar_portapapeles, COLORS["azul_btn"]),
+        ("🧹 Limpiar", limpiar, COLORS["pizarra"]),
+        ("💾 GUARDAR", guardar, COLORS["verde"]),
+        ("Cancelar", win.destroy, COLORS["gris"]),
+    ):
+        tk.Button(
+            barra_bts,
+            text=txt,
+            command=cmd,
+            bg=color,
+            fg="white",
+            font=fuente(9, True),
+            padx=14,
+            pady=7,
+            cursor="hand2",
+            relief="flat",
+        ).pack(side="left", padx=5)
+
+    refrescar_estado()
+    filas[0]["entry"].focus_set()
+    win.wait_window()
+
+
+
 def abrir_modulo_cambiar_nombre(ventana_padre):
     # 1. Obtener el número de serie de la BIOS
     try:
         si = subprocess.STARTUPINFO()
         si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         si.wShowWindow = 0
-        
+
         cmd = ["powershell", "-NoProfile", "-Command", "(Get-CimInstance Win32_Bios).SerialNumber"]
         serial = subprocess.check_output(cmd, text=True, startupinfo=si).strip()
     except Exception as e:
@@ -3502,21 +3998,21 @@ def abrir_modulo_cambiar_nombre(ventana_padre):
     # 2. Limpiar y formatear el nombre (Máximo 15 caracteres para NetBIOS en Windows)
     serial_limpio = re.sub(r"[^a-zA-Z0-9\-]", "", serial)
     nuevo_nombre = f"ARR-{serial_limpio}"
-    
+
     if len(nuevo_nombre) > 15:
         nuevo_nombre = nuevo_nombre[:15] # Truncar a 15 caracteres si es muy largo
-        
+
     respuesta = messagebox.askyesno(
-        "Confirmar Cambio de Nombre", 
+        "Confirmar Cambio de Nombre",
         f"El número de serie detectado es: {serial}\n\n"
         f"¿Estás seguro de cambiar el nombre de este equipo a:\n\n{nuevo_nombre}?\n\n"
         "(Debes aceptar la ventana de permisos de Administrador que aparecerá a continuación).",
         parent=ventana_padre
     )
-    
+
     if not respuesta:
         return
-        
+
     # 3. Aplicar el cambio de nombre
     try:
         ps_command = f'Rename-Computer -NewName "{nuevo_nombre}"'
@@ -3526,25 +4022,25 @@ def abrir_modulo_cambiar_nombre(ventana_padre):
             "-Command",
             f"Start-Process powershell -ArgumentList '-NoProfile -WindowStyle Hidden -Command {ps_command}' -Verb RunAs"
         ]
-        
+
         subprocess.run(cmd, check=True)
-        
+
         messagebox.showinfo(
-            "✅ Solicitud Enviada", 
-            f"Se ha ordenado el cambio de nombre a '{nuevo_nombre}'.\n\nPor favor, REINICIA EL EQUIPO manualmente para que los cambios surtan efecto.", 
+            "✅ Solicitud Enviada",
+            f"Se ha ordenado el cambio de nombre a '{nuevo_nombre}'.\n\nPor favor, REINICIA EL EQUIPO manualmente para que los cambios surtan efecto.",
             parent=ventana_padre
         )
-        
+
     except subprocess.CalledProcessError:
         messagebox.showerror(
-            "Error", 
-            "No se pudo cambiar el nombre del equipo.\n\nAsegúrate de aceptar la ventana de permisos de Administrador.", 
+            "Error",
+            "No se pudo cambiar el nombre del equipo.\n\nAsegúrate de aceptar la ventana de permisos de Administrador.",
             parent=ventana_padre
         )
     except Exception as e:
         messagebox.showerror(
-            "Error Inesperado", 
-            f"Ocurrió un error al intentar cambiar el nombre: {e}", 
+            "Error Inesperado",
+            f"Ocurrió un error al intentar cambiar el nombre: {e}",
             parent=ventana_padre
         )
 
@@ -3569,7 +4065,7 @@ def limpiar_ventana(ventana):
 
 def mostrar_menu_principal(ventana):
     limpiar_ventana(ventana)
-    ventana.geometry("520x700")
+    ventana.geometry("700x800")
 
     titulo_ui(ventana, "🖥️ Sistema de Control de Inventario", size=16, pady=(24, 8))
 
@@ -3681,7 +4177,7 @@ def mostrar_menu_principal(ventana):
 
     boton_menu(
         frame_btns,
-        "📦 CERRAR OT (genera FUSIONADO final)",
+        "CERRAR OT",
         lambda: accion_cerrar_lote(ventana),
         COLORS["verde"],
     )
@@ -3731,6 +4227,14 @@ def mostrar_menu_principal(ventana):
         "🏷️ GENERAR ETIQUETA MANUAL (Equipos Malos)",
         lambda: abrir_modulo_etiquetas_manual(ventana),
         COLORS["pizarra"],
+        size=9,
+        bold="bold",
+    )
+    boton_menu(
+        frame_btns,
+        "AGREGAR TRANSFORMADORES DE EQUIPOS",
+        lambda: abrir_modulo_agregar_transformador(ventana),
+        COLORS["verde_esmeralda"],
         size=9,
         bold="bold",
     )
@@ -3854,7 +4358,8 @@ def construir_ui_formulario(ventana, data, lote):
     ).pack(pady=(6, 0))
     tk.Label(
         lf_log,
-        text=f"{cfg_mov['etiqueta_campo']}: {lote['numero']}",
+        text=f"{cfg_mov['etiqueta_campo']}: {lote['numero']}\n"
+        f"{cfg_mov['etiqueta_campo_sec']}: {lote.get('numero_sec') or '—'}",
         bg=COLORS["fondo"],
         fg=COLORS["gris"],
         font=("Segoe UI", 9),

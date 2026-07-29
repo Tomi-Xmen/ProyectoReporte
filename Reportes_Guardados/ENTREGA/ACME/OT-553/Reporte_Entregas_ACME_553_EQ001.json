@@ -1,0 +1,37 @@
+{
+    "CLIENTE": "ACME",
+    "SERIAL": "EQ001",
+    "SN_Win": "WINKEY",
+    "SN_HDD": "D1",
+    "SN_Transf": "PENDIENTE",
+    "SN_APP": "PENDIENTE",
+    "MODELO": "Latitude 5401",
+    "TIPO_MOVIMIENTO": "Entrega",
+    "GUIA_ID": "9001",
+    "OT_ID": "553",
+    "OBS": "Sin observaciones",
+    "DETALLE_COMPONENTES": [
+        {
+            "nombre": "Pantalla",
+            "estado": "OK",
+            "obs": ""
+        }
+    ],
+    "TIENE_FALLAS": false,
+    "DATA": {
+        "serial": "EQ001",
+        "model": "Latitude 5401",
+        "key": "WINKEY",
+        "cpu": "i5",
+        "disk_serials": [
+            "D1"
+        ],
+        "ram_html": "",
+        "disk_html": "",
+        "net_rows": "",
+        "fecha": "01/01/2026",
+        "Battery": "OK"
+    },
+    "OFFICE": "No",
+    "ESCANEADO": "2026-07-29T11:43:20"
+}

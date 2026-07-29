@@ -150,6 +150,41 @@ def ventana_modal(padre, titulo_ventana, geometria):
     return win
 
 
+def marco_scrolleable(padre, bg=None):
+    """
+    Área con scroll vertical. Devuelve (contenedor, interior, canvas): el
+    contenedor se empaqueta como cualquier widget y los hijos van en 'interior'.
+
+    Un Frame de Tk no scrollea solo; el truco estándar es meterlo dentro de un
+    Canvas y mover el Canvas. La rueda del mouse se engancha al entrar y se
+    suelta al salir, porque bind_all es global y si no queda secuestrada
+    después de que el área desaparezca.
+    """
+    fondo = bg or COLORS["fondo"]
+    contenedor = tk.Frame(padre, bg=fondo)
+    canvas = tk.Canvas(contenedor, bg=fondo, highlightthickness=0)
+    barra = tk.Scrollbar(contenedor, orient="vertical", command=canvas.yview)
+    canvas.configure(yscrollcommand=barra.set)
+    barra.pack(side="right", fill="y")
+    canvas.pack(side="left", fill="both", expand=True)
+
+    interior = tk.Frame(canvas, bg=fondo)
+    ventana_interna = canvas.create_window((0, 0), window=interior, anchor="nw")
+    interior.bind(
+        "<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+    )
+    canvas.bind(
+        "<Configure>", lambda e: canvas.itemconfigure(ventana_interna, width=e.width)
+    )
+
+    def _rueda(event):
+        canvas.yview_scroll(-1 * (event.delta // 120), "units")
+
+    canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _rueda))
+    canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+    return contenedor, interior, canvas
+
+
 def boton_menu(parent, texto, comando, color, size=11, bold="bold"):
     """Botón ancho del menú/pantallas (relleno horizontal)."""
     tk.Button(
@@ -3688,7 +3723,13 @@ def abrir_modulo_agregar_transformador(ventana_padre):
         )
         return
 
-    registros = leer_equipos_lote_con_ruta(lote)[::-1]  # orden de escaneo
+    # Orden de escaneo explícito (el más viejo primero). No alcanza con dar
+    # vuelta la lista: ESCANEADO tiene resolución de segundos, así que dos
+    # equipos del mismo segundo empatan y el reverso los deja invertidos entre
+    # sí. Ordenar ascendente respeta el empate en vez de darlo vuelta.
+    registros = sorted(
+        leer_equipos_lote_con_ruta(lote), key=lambda par: _clave_orden(par[1])
+    )
     if not registros:
         messagebox.showwarning(
             "OT sin equipos",
@@ -3717,33 +3758,8 @@ def abrir_modulo_agregar_transformador(ventana_padre):
     ).pack(pady=(2, 8))
 
     # --- Grilla scrolleable: una OT puede traer 50+ equipos ---
-    # Un Frame no scrollea solo; el truco estándar de Tk es meterlo dentro de
-    # un Canvas y mover el Canvas.
-    marco = tk.Frame(win, bg=COLORS["fondo"])
+    marco, grilla, canvas = marco_scrolleable(win)
     marco.pack(fill="both", expand=True, padx=18)
-
-    canvas = tk.Canvas(marco, bg=COLORS["fondo"], highlightthickness=0)
-    barra = tk.Scrollbar(marco, orient="vertical", command=canvas.yview)
-    canvas.configure(yscrollcommand=barra.set)
-    barra.pack(side="right", fill="y")
-    canvas.pack(side="left", fill="both", expand=True)
-
-    grilla = tk.Frame(canvas, bg=COLORS["fondo"])
-    ventana_interna = canvas.create_window((0, 0), window=grilla, anchor="nw")
-    grilla.bind(
-        "<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-    )
-    canvas.bind(
-        "<Configure>", lambda e: canvas.itemconfigure(ventana_interna, width=e.width)
-    )
-
-    # bind_all es global: se engancha al entrar y se suelta al salir para no
-    # dejar la rueda del mouse secuestrada cuando la ventana ya se cerró.
-    def _rueda(event):
-        canvas.yview_scroll(-1 * (event.delta // 120), "units")
-
-    canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _rueda))
-    canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
 
     for col, (txt, ancho) in enumerate(
         (("#", 3), ("MODELO", 26), ("SERIAL EQUIPO", 20), ("SERIE TRANSFORMADOR", 24))
@@ -4063,6 +4079,18 @@ def limpiar_ventana(ventana):
         widget.destroy()
 
 
+def _seccion_menu(padre, titulo):
+    """Encabezado de grupo del menú: línea divisoria + rótulo chico."""
+    ttk.Separator(padre, orient="horizontal").pack(fill="x", pady=(14, 5))
+    tk.Label(
+        padre,
+        text=titulo.upper(),
+        font=fuente(8, True),
+        bg=COLORS["fondo"],
+        fg=COLORS["gris"],
+    ).pack(anchor="w", pady=(0, 2))
+
+
 def mostrar_menu_principal(ventana):
     limpiar_ventana(ventana)
     ventana.geometry("700x800")
@@ -4127,9 +4155,16 @@ def mostrar_menu_principal(ventana):
     else:
         tk.Label(ventana, text="", bg=COLORS["fondo"]).pack(pady=(0, 4))
 
-    frame_btns = tk.Frame(ventana, bg=COLORS["fondo"])
-    frame_btns.pack(fill="both", expand=True, padx=40)
+    # El menú va con scroll: la lista de acciones creció hasta rozar el alto de
+    # la ventana y sin esto el próximo botón que se agregue queda cortado, sin
+    # forma de llegar a él.
+    contenedor, frame_btns, _ = marco_scrolleable(ventana)
+    contenedor.pack(fill="both", expand=True, padx=40)
 
+    # El color agrupa, no decora: celeste = manejo de la OT, verde = cerrarla,
+    # naranja = sale de esta máquina, morado = reparación, pizarra = utilitario
+    # suelto. Dos botones del mismo color hacen cosas del mismo tipo.
+    #
     # Equipos del modelo anterior (sueltos, sin carpeta de OT): hay que
     # adoptarlos en una OT para que entren al fusionado.
     legacy = sum(len(v) for v in pendientes_legacy().values())
@@ -4150,94 +4185,61 @@ def mostrar_menu_principal(ventana):
         size=12,
     )
 
+    _seccion_menu(frame_btns, "Orden de trabajo")
+
     frame_ot = tk.Frame(frame_btns, bg=COLORS["fondo"])
     frame_ot.pack(fill="x", pady=2)
-    tk.Button(
-        frame_ot,
-        text="➕ NUEVA OT",
-        command=lambda: accion_nueva_ot(ventana),
-        bg=COLORS["celeste"],
-        fg="white",
-        font=fuente(10, True),
-        pady=8,
-        cursor="hand2",
-        relief="flat",
-    ).pack(side="left", fill="x", expand=True, padx=(0, 3))
-    tk.Button(
-        frame_ot,
-        text=f"🔄 CAMBIAR OT ({len(abiertos)})",
-        command=lambda: accion_cambiar_lote(ventana),
-        bg=COLORS["pizarra"],
-        fg="white",
-        font=fuente(10, True),
-        pady=8,
-        cursor="hand2",
-        relief="flat",
-    ).pack(side="left", fill="x", expand=True, padx=(3, 0))
+    for texto, comando, lado in (
+        ("➕ NUEVA OT", lambda: accion_nueva_ot(ventana), (0, 3)),
+        (
+            f"🔄 CAMBIAR OT ({len(abiertos)})",
+            lambda: accion_cambiar_lote(ventana),
+            (3, 0),
+        ),
+    ):
+        tk.Button(
+            frame_ot,
+            text=texto,
+            command=comando,
+            bg=COLORS["celeste"],
+            fg="white",
+            font=fuente(10, True),
+            pady=8,
+            cursor="hand2",
+            relief="flat",
+        ).pack(side="left", fill="x", expand=True, padx=lado)
 
     boton_menu(
         frame_btns,
-        "CERRAR OT",
+        "✅ CERRAR OT",
         lambda: accion_cerrar_lote(ventana),
         COLORS["verde"],
     )
+
+    _seccion_menu(frame_btns, "Archivo y respaldo")
     boton_menu(
         frame_btns,
         "🚀 ENVIAR CARPETAS A RED",
         lambda: accion_enviar_red(ventana),
         COLORS["naranja"],
+        size=10,
     )
     boton_menu(
         frame_btns,
         "🔧 RECONSTRUIR / REPARAR OT DESDE JSONs",
         lambda: accion_unir_Json(ventana),
         COLORS["morado"],
+        size=10,
     )
 
-    ttk.Separator(frame_btns, orient="horizontal").pack(fill="x", pady=15)
-    tk.Label(
-        frame_btns,
-        text="Herramientas de Auditoría",
-        font=fuente(10, True),
-        bg=COLORS["fondo"],
-        fg=COLORS["gris"],
-    ).pack(pady=(0, 5))
-    boton_menu(
-        frame_btns,
-        "📑 COMPARAR EXCEL (Entregas vs Retiros)",
-        lambda: abrir_modulo_comparacion_excel(ventana),
-        COLORS["celeste"],
-        size=9,
-        bold="normal",
-    )
-
-    # --- BOTÓN PARA CAMBIAR NOMBRE DEL EQUIPO ---
-    boton_menu(
-        frame_btns,
-        "💻 CAMBIAR NOMBRE DEL EQUIPO",
-        lambda: abrir_modulo_cambiar_nombre(ventana),
-        COLORS["verde_esmeralda"],
-        size=9,
-        bold="bold",
-    )
-
-    # --- BOTÓN DE ETIQUETAS MANUALES ---
-    boton_menu(
-        frame_btns,
-        "🏷️ GENERAR ETIQUETA MANUAL (Equipos Malos)",
-        lambda: abrir_modulo_etiquetas_manual(ventana),
-        COLORS["pizarra"],
-        size=9,
-        bold="bold",
-    )
-    boton_menu(
-        frame_btns,
-        "AGREGAR TRANSFORMADORES DE EQUIPOS",
-        lambda: abrir_modulo_agregar_transformador(ventana),
-        COLORS["verde_esmeralda"],
-        size=9,
-        bold="bold",
-    )
+    _seccion_menu(frame_btns, "Herramientas")
+    for texto, comando in (
+        ("🔌 AGREGAR TRANSFORMADORES", lambda: abrir_modulo_agregar_transformador(ventana)),
+        ("🏷️ GENERAR ETIQUETA MANUAL (Equipos Malos)", lambda: abrir_modulo_etiquetas_manual(ventana)),
+        ("📑 COMPARAR EXCEL (Entregas vs Retiros)", lambda: abrir_modulo_comparacion_excel(ventana)),
+        ("💻 CAMBIAR NOMBRE DEL EQUIPO", lambda: abrir_modulo_cambiar_nombre(ventana)),
+    ):
+        boton_menu(frame_btns, texto, comando, COLORS["pizarra"], size=9)
 
 
 def iniciar_escaneo(ventana):

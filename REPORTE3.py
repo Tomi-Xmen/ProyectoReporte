@@ -43,7 +43,6 @@ import json
 from logging import root
 import os
 import re
-import shutil
 import socket
 import subprocess
 import sys
@@ -76,6 +75,17 @@ try:
 except ImportError:
     PANDAS_AVAILABLE = False
 
+# Importar librerías para el envío por SCP (SSH). Si faltan, el botón de envío
+# avisa en vez de reventar: el resto de la app (escaneo, reportes) no depende
+# de ellas.
+try:
+    import paramiko
+    from scp import SCPClient
+
+    SCP_AVAILABLE = True
+except ImportError:
+    SCP_AVAILABLE = False
+
 # Importar librería para crear Word (docx)
 try:
     from docx import Document
@@ -90,8 +100,28 @@ except ImportError:
 
 # ============================================================================
 # 1. CONFIGURACIÓN
+# ----------------------------------------------------------------------------
+# ENVÍO AL SERVIDOR — por SCP sobre SSH (reemplaza el copiado a la carpeta
+# compartida SMB). Cambiar cualquiera de estas constantes exige recompilar el
+# .exe: son la única fuente de verdad de la conexión.
+#
+# Al servidor viajan SOLO los archivos que son FUENTE DE VERDAD o entregables:
+# los JSON individuales, el JSON FUSIONADO, el informe Word y el marcador
+# '.cerrado'. El HTML NO se sube: es un derivado y se rearma allá con
+# "RECONSTRUIR DESDE JSONs", que produce un reporte idéntico y 100% funcional.
 # ============================================================================
-CARPETA_DESTINO = r"\\192.168.1.68\transformadores"
+SCP_HOST = "192.168.10.15"          # IP o nombre del servidor SSH
+SCP_PUERTO = 22                    # puerto SSH
+SCP_USUARIO = "Reporte"           # usuario SSH  ⬅️ COMPLETAR
+# Clave privada SSH (id_rsa / .pem). Si queda vacía se intenta con las claves
+# del agente/~/.ssh del usuario de Windows.
+SCP_CLAVE = r"C:\Users\Tomas\.ssh\id_rsa"   # ⬅️ COMPLETAR
+SCP_CLAVE_PASSPHRASE = "1234567890"          # vacío si la clave no tiene passphrase
+# Carpeta base REMOTA (ruta estilo Linux). Debajo se replica el árbol completo
+# <GRUPO>/<CLIENTE>/<OT-553>, igual que en local: así lo que se baja del
+# servidor se reconstruye como OT canónica y no como "carpeta suelta".
+SCP_DESTINO = "/DocumentosLab/Reportes_Guardados"# ⬅️ COMPLETAR
+SCP_TIMEOUT = 20                   # segundos para conectar antes de fallar
 
 
 # ============================================================================
@@ -987,6 +1017,63 @@ def generar_informe_word(cliente, equipos_malos, ruta_cliente, id_lote=""):
 # Corre PS_SCRIPT (sección 3) con reintentos/timeout y devuelve el dict `data`
 # usado por todo el resto (formulario, guardado, HTML).
 # ============================================================================
+
+# ─────────────────────────────────────────────────────────
+#  Filas de hardware del reporte HTML — ÚNICA fuente
+#
+#  El JS del reporte (extraerDatos) lee la RAM, los discos y la red de estas
+#  filas, no de los JSON: los th 'Módulo RAM', 'Discos Internos' y
+#  'Serie Disco Duro' son el contrato del que salen "Copiar Filas" y el CSV
+#  para Valida. Por eso las arma un solo lugar, usado tanto por el escaneo
+#  como por la reconstrucción: si divergen, el reporte reconstruido pierde
+#  specs y exporta filas incompletas.
+# ─────────────────────────────────────────────────────────
+def render_filas_ram(ram_list):
+    """Filas 'Módulo RAM' desde la lista cruda '8GB|3200|PC4|Fabricante|PN'."""
+    if isinstance(ram_list, str):
+        ram_list = [ram_list]
+    ram_list = [r for r in (ram_list or []) if r]
+    return (
+        "".join(f"<tr><th>Módulo RAM</th><td>{r}</td></tr>" for r in ram_list)
+        or "<tr><th>RAM</th><td>No detectada</td></tr>"
+    )
+
+
+def render_filas_discos(discos):
+    """
+    Filas de discos desde [{'desc':…, 'serial':…}]. Devuelve (html, seriales).
+    El serial se normaliza igual que en el escaneo (sin símbolos, 16 últimos)
+    para que el mismo disco dé la misma cadena vino de donde vino.
+    """
+    if isinstance(discos, dict):
+        discos = [discos]
+    html_discos = ""
+    seriales = []
+    for d in discos or []:
+        desc = (d.get("desc") or "Desconocido").strip()
+        serie = re.sub(r"[^a-zA-Z0-9]", "", str(d.get("serial", "NA")))[-16:]
+        seriales.append(serie)
+        html_discos += (
+            f"<tr><th>Discos Internos</th><td>{desc}</td></tr>"
+            f"<tr><th>Serie Disco Duro</th><td class='serial-tag'>{serie}</td></tr>"
+        )
+    return html_discos, seriales
+
+
+def render_filas_red(net_list):
+    """Filas 'Red Activa' desde la lista cruda de adaptadores."""
+    if isinstance(net_list, str):
+        net_list = [net_list]
+    net_list = [n for n in (net_list or []) if n]
+    return (
+        "".join(
+            f"<tr><td>Red Activa</td><td><span class='net-tag'>{n}</span></td></tr>"
+            for n in net_list
+        )
+        or "<tr><td colspan='2'>Sin red activa</td></tr>"
+    )
+
+
 def get_inventory_fast(max_retries=3, timeout_per_attempt=45):
     last_error = None
 
@@ -1049,10 +1136,7 @@ def get_inventory_fast(max_retries=3, timeout_per_attempt=45):
             ram_list = data.get("ram_rows", [])
             if isinstance(ram_list, str):
                 ram_list = [ram_list]
-            ram_html = (
-                "".join(f"<tr><th>Módulo RAM</th><td>{r}</td></tr>" for r in ram_list)
-                or "<tr><th>RAM</th><td>No detectada</td></tr>"
-            )
+            ram_html = render_filas_ram(ram_list)
 
             fabricantes_ram = []
             for r in ram_list:
@@ -1076,27 +1160,12 @@ def get_inventory_fast(max_retries=3, timeout_per_attempt=45):
             disks = data.get("disks_data", [])
             if isinstance(disks, dict):
                 disks = [disks]
-            disk_html = ""
-            disk_serials = []
-            for d in disks:
-                desc = d.get("desc", "Desconocido")
-                serie = re.sub(r"[^a-zA-Z0-9]", "", d.get("serial", "NA"))[-16:]
-                disk_serials.append(serie)
-                disk_html += (
-                    f"<tr><th>Discos Internos</th><td>{desc}</td></tr>"
-                    f"<tr><th>Serie Disco Duro</th><td class='serial-tag'>{serie}</td></tr>"
-                )
+            disk_html, disk_serials = render_filas_discos(disks)
 
             net_list = data.get("net_rows", [])
             if isinstance(net_list, str):
                 net_list = [net_list]
-            net_html = (
-                "".join(
-                    f"<tr><td>Red Activa</td><td><span class='net-tag'>{n}</span></td></tr>"
-                    for n in net_list
-                )
-                or "<tr><td colspan='2'>Sin red activa</td></tr>"
-            )
+            net_html = render_filas_red(net_list)
 
             return {
                 "fecha": datetime.now().strftime("%d/%m/%Y %H:%M"),
@@ -1108,7 +1177,15 @@ def get_inventory_fast(max_retries=3, timeout_per_attempt=45):
                 "ram_html": ram_html,
                 "ram_raw": ram_list,
                 "disk_html": disk_html,
+                # Crudos además del HTML: si el HTML se pierde o cambia de
+                # formato, la reconstrucción rearma las filas desde acá sin
+                # perder la descripción del disco (que el serial solo no trae).
+                "disk_raw": disks,
                 "disk_serials": disk_serials,
+                "net_html": net_html,
+                "net_raw": net_list,
+                # Se conserva el nombre viejo: los JSON ya guardados lo usan y
+                # _reconstruir_entry_desde_json sigue leyéndolo primero.
                 "net_rows": net_html,
                 "Manufacturer": fabricante_final,
                 "Partnumber": partnumber_final,
@@ -2275,6 +2352,165 @@ def accion_cerrar_lote(ventana):
     mostrar_menu_principal(ventana)
 
 
+# ─────────────────────────────────────────────────────────
+#  ENVÍO POR SCP (SSH)
+#
+#  Sube al servidor solo lo que es fuente de verdad o entregable —JSON
+#  individuales, JSON FUSIONADO, informe Word y el marcador '.cerrado'—
+#  replicando el árbol <GRUPO>/<CLIENTE>/<OT>. El HTML se deja fuera a
+#  propósito: es un derivado pesado que allá se rearma desde los JSON con
+#  "RECONSTRUIR DESDE JSONs", idéntico y con todas sus funcionalidades.
+# ─────────────────────────────────────────────────────────
+
+# Extensiones/archivos que SÍ viajan. Todo lo demás (HTML, .enviado, .lote_activo,
+# temporales de Office) se queda en la máquina.
+_SCP_EXTENSIONES = (".json", ".docx")
+
+
+def archivos_a_enviar(ruta_ot):
+    """
+    Archivos de una OT que deben subir al servidor, ya ordenados.
+
+    Se envían los JSON (individuales + FUSIONADO), el Word de fallas y los
+    marcadores de estado '.cerrado' y '.lote' (este último trae el número de
+    documento que la ruta no codifica y sin él la OT se reconstruye sin su
+    guía/OT secundaria). Quedan fuera el HTML —derivado, se rearma allá— y
+    '.enviado', que es control local de sincronización.
+    """
+    archivos = []
+    try:
+        nombres = sorted(os.listdir(ruta_ot))
+    except Exception:
+        return archivos
+    for nombre in nombres:
+        ruta = os.path.join(ruta_ot, nombre)
+        if not os.path.isfile(ruta):
+            continue
+        if nombre == _MARCADOR_ENVIADO:
+            continue
+        if nombre in (_MARCADOR_CERRADO, _ARCHIVO_META_LOTE):
+            archivos.append(ruta)
+            continue
+        if nombre.startswith("~$"):  # temporales de Word
+            continue
+        if nombre.lower().endswith(_SCP_EXTENSIONES):
+            archivos.append(ruta)
+    return archivos
+
+
+def _ruta_remota(*partes):
+    """
+    Une un path remoto estilo POSIX. No se usa os.path.join: acá corre Windows
+    y devolvería '\\', que el servidor Linux trata como parte del nombre.
+    """
+    absoluta = str(partes[0]).startswith("/")
+    limpias = [str(p).replace("\\", "/").strip("/") for p in partes if p]
+    unida = "/".join(limpias)
+    return f"/{unida}" if absoluta else unida
+
+
+def abrir_conexion_scp():
+    """
+    Cliente SSH conectado y listo. Lanza una excepción con mensaje legible si
+    la clave no existe, el host no responde o las credenciales fallan.
+    """
+    if not SCP_AVAILABLE:
+        raise RuntimeError(
+            "Falta la librería 'paramiko'/'scp'.\n\n"
+            "Instalar con:  pip install paramiko scp"
+        )
+
+    clave = None
+    if SCP_CLAVE:
+        if not os.path.isfile(SCP_CLAVE):
+            raise RuntimeError(
+                f"No se encontró la clave SSH:\n{SCP_CLAVE}\n\n"
+                "Revisa la constante SCP_CLAVE."
+            )
+        # El tipo de clave (RSA/Ed25519/ECDSA) no se conoce de antemano: se
+        # prueban todos y se usa el primero que la lea.
+        ultimo = None
+        for tipo in (
+            paramiko.Ed25519Key,
+            paramiko.RSAKey,
+            paramiko.ECDSAKey,
+        ):
+            try:
+                clave = tipo.from_private_key_file(
+                    SCP_CLAVE, password=SCP_CLAVE_PASSPHRASE or None
+                )
+                break
+            except Exception as e:
+                ultimo = e
+        if clave is None:
+            raise RuntimeError(
+                f"No se pudo leer la clave SSH:\n{SCP_CLAVE}\n\n{ultimo}\n\n"
+                "Si la clave tiene passphrase, cárgala en SCP_CLAVE_PASSPHRASE."
+            )
+
+    cliente = paramiko.SSHClient()
+    cliente.load_system_host_keys()
+    # El servidor es de la empresa y su huella puede cambiar al reinstalarlo:
+    # aceptarla evita que el envío se caiga por un host key desconocido.
+    cliente.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        cliente.connect(
+            hostname=SCP_HOST,
+            port=SCP_PUERTO,
+            username=SCP_USUARIO,
+            pkey=clave,
+            timeout=SCP_TIMEOUT,
+            banner_timeout=SCP_TIMEOUT,
+            auth_timeout=SCP_TIMEOUT,
+            look_for_keys=clave is None,
+            allow_agent=clave is None,
+        )
+    except paramiko.AuthenticationException:
+        cliente.close()
+        raise RuntimeError(
+            f"El servidor rechazó las credenciales de '{SCP_USUARIO}'.\n\n"
+            "Verifica el usuario y que la clave pública esté en el "
+            "authorized_keys del servidor."
+        )
+    except Exception as e:
+        cliente.close()
+        raise RuntimeError(
+            f"No se pudo conectar a {SCP_HOST}:{SCP_PUERTO}\n\n{e}\n\n"
+            "Verifica la VPN/Wi-Fi y que el servicio SSH esté arriba."
+        )
+    return cliente
+
+
+def _mkdir_remoto(cliente, ruta):
+    """Crea la carpeta remota (y sus padres). Falla ruidosamente si no puede."""
+    comando = f"mkdir -p '{ruta}'"
+    _stdin, stdout, stderr = cliente.exec_command(comando, timeout=SCP_TIMEOUT)
+    codigo = stdout.channel.recv_exit_status()
+    if codigo != 0:
+        raise RuntimeError(
+            f"No se pudo crear la carpeta remota {ruta}: "
+            f"{stderr.read().decode('utf-8', 'replace').strip()}"
+        )
+
+
+def enviar_ot_por_scp(cliente, grupo, cliente_folder, nombre_ot, ruta_origen):
+    """
+    Sube los archivos de UNA OT. Devuelve la cantidad de archivos subidos.
+    Sobrescribe lo que ya esté allá: una OT abierta se re-envía varias veces y
+    cada envío debe dejar el servidor al día.
+    """
+    archivos = archivos_a_enviar(ruta_origen)
+    if not archivos:
+        return 0
+    destino = _ruta_remota(SCP_DESTINO, grupo, cliente_folder, nombre_ot)
+    _mkdir_remoto(cliente, destino)
+    with SCPClient(cliente.get_transport(), socket_timeout=SCP_TIMEOUT) as scp:
+        # De a uno y no en bloque: si un archivo falla se sabe cuál fue.
+        for ruta in archivos:
+            scp.put(ruta, remote_path=_ruta_remota(destino, os.path.basename(ruta)))
+    return len(archivos)
+
+
 def accion_enviar_red(ventana):
     carpeta_local = ruta_reportes()
 
@@ -2282,11 +2518,22 @@ def accion_enviar_red(ventana):
         messagebox.showwarning("Aviso", "No hay reportes locales para enviar.")
         return
 
+    if not SCP_AVAILABLE:
+        messagebox.showerror(
+            "Falta dependencia",
+            "El envío por SCP necesita las librerías 'paramiko' y 'scp'.\n\n"
+            "Instálalas con:  pip install paramiko scp\n"
+            "y vuelve a compilar el ejecutable.",
+            parent=ventana,
+        )
+        return
+
     # Pendientes = carpetas de OT SIN el marcador '.enviado'. El marcador va por
     # OT (no por cliente): agregar un equipo a una sola OT no obliga a re-subir
     # las demás carpetas de ese cliente, que pueden ser miles.
-    # En el NAS se replica cliente/OT: ENTREGA/ACME/OT-553 -> ACME/OT-553.
-    pendientes = []  # (cliente, nombre_ot, ruta_origen, abierta)
+    # En el servidor se replica el árbol COMPLETO ENTREGA/ACME/OT-553: con el
+    # grupo delante, lo que se baje de allá se reconstruye como OT canónica.
+    pendientes = []  # (grupo, cliente, nombre_ot, ruta_origen, abierta)
     hay_carpetas = False
     for grupo in ("ENTREGA", "RETIROS"):
         ruta_grupo = os.path.join(carpeta_local, grupo)
@@ -2303,14 +2550,14 @@ def accion_enviar_red(ventana):
                 hay_carpetas = True
                 if not os.path.exists(os.path.join(ruta_ot, _MARCADOR_ENVIADO)):
                     pendientes.append(
-                        (cli, ot, ruta_ot, not esta_cerrado(ruta_ot))
+                        (grupo, cli, ot, ruta_ot, not esta_cerrado(ruta_ot))
                     )
 
     if not pendientes:
         if hay_carpetas:
             messagebox.showinfo(
                 "Nada nuevo por enviar",
-                "Todas las OT ya fueron enviadas a la red.",
+                "Todas las OT ya fueron enviadas al servidor.",
             )
         else:
             messagebox.showwarning(
@@ -2319,16 +2566,8 @@ def accion_enviar_red(ventana):
             )
         return
 
-    # Validar si el servidor de red es accesible antes de intentar copiar
-    if not os.path.exists(CARPETA_DESTINO):
-        messagebox.showerror(
-            "Error de Red",
-            f"No se pudo acceder al servidor:\n{CARPETA_DESTINO}\n\n"
-            "Verifica tu conexión VPN o Wi-Fi.",
-        )
-        return
-
-    abiertas = sum(1 for p in pendientes if p[3])
+    total_archivos = sum(len(archivos_a_enviar(p[3])) for p in pendientes)
+    abiertas = sum(1 for p in pendientes if p[4])
     aviso_abiertas = ""
     if abiertas:
         aviso_abiertas = (
@@ -2338,81 +2577,199 @@ def accion_enviar_red(ventana):
 
     if not messagebox.askyesno(
         "Confirmar Envío",
-        f"¿Enviar {len(pendientes)} carpeta(s) de OT al servidor?\n\n"
-        f"Destino: {CARPETA_DESTINO}{aviso_abiertas}",
+        f"¿Enviar {len(pendientes)} carpeta(s) de OT al servidor por SCP?\n\n"
+        f"Destino: {SCP_USUARIO}@{SCP_HOST}:{SCP_DESTINO}\n"
+        f"Archivos: {total_archivos} (JSON individuales, FUSIONADO, Word y "
+        f"marcadores).\n\n"
+        f"El HTML no se sube: se reconstruye desde los JSON en destino."
+        f"{aviso_abiertas}",
     ):
         return
 
     # --- Ventana de Carga Visual ---
     win_carga = tk.Toplevel(ventana)
     win_carga.title("Enviando...")
-    win_carga.geometry("350x150")
+    win_carga.geometry("420x175")
     win_carga.configure(bg=COLORS["fondo"])
-    win_carga.grab_set() # Bloquea la ventana principal para evitar que sigan usando el programa
+    win_carga.grab_set()  # Bloquea la ventana principal durante el envío
 
-    tk.Label(win_carga, text="🚀", font=("Segoe UI", 24), bg=COLORS["fondo"]).pack(pady=(15, 5))
-    tk.Label(win_carga, text="Copiando archivos a la red...", font=("Segoe UI", 10, "bold"), bg=COLORS["fondo"], fg=COLORS["azul"]).pack()
-    tk.Label(win_carga, text="Por favor, no cierres el programa.", font=("Segoe UI", 9), bg=COLORS["fondo"], fg=COLORS["gris"]).pack()
+    tk.Label(win_carga, text="🚀", font=("Segoe UI", 24), bg=COLORS["fondo"]).pack(
+        pady=(15, 5)
+    )
+    tk.Label(
+        win_carga,
+        text=f"Subiendo por SCP a {SCP_HOST}...",
+        font=("Segoe UI", 10, "bold"),
+        bg=COLORS["fondo"],
+        fg=COLORS["azul"],
+    ).pack()
+    lbl_progreso = tk.Label(
+        win_carga,
+        text="Conectando…",
+        font=("Segoe UI", 9),
+        bg=COLORS["fondo"],
+        fg=COLORS["gris_oscuro"],
+    )
+    lbl_progreso.pack(pady=(6, 0))
+    tk.Label(
+        win_carga,
+        text="Por favor, no cierres el programa.",
+        font=("Segoe UI", 9),
+        bg=COLORS["fondo"],
+        fg=COLORS["gris"],
+    ).pack(pady=(6, 0))
+
+    def progreso(texto):
+        """Refresca el rótulo de avance desde el hilo de trabajo."""
+        def _set():
+            if win_carga.winfo_exists():
+                lbl_progreso.config(text=texto)
+        ventana.after(0, _set)
 
     # --- Función que hace el trabajo pesado en segundo plano ---
     def tarea_envio():
         # Backup previo al envío. Va en el hilo para no congelar la UI y nunca
         # lanza: si falla, el envío continúa igual.
         ruta_bk = crear_backup("envio")
-        errores = 0
+        errores = []
         enviados = 0
+        subidos = 0
 
-        for cliente_folder, nombre_ot, ruta_origen, _abierta in pendientes:
-            ruta_destino = os.path.join(CARPETA_DESTINO, cliente_folder, nombre_ot)
+        try:
+            cliente = abrir_conexion_scp()
+        except Exception as e:
+            ventana.after(0, finalizar_envio, 0, 0, [str(e)], ruta_bk, True)
+            return
+
+        try:
+            for i, (grupo, cli, nombre_ot, ruta_origen, _abierta) in enumerate(
+                pendientes, 1
+            ):
+                progreso(f"[{i}/{len(pendientes)}] {cli} · {nombre_ot}")
+                try:
+                    n = enviar_ot_por_scp(cliente, grupo, cli, nombre_ot, ruta_origen)
+                    subidos += n
+                    # Marcar DESPUÉS de subir: si el envío falla, la OT sigue
+                    # pendiente y se reintenta en el próximo envío.
+                    with open(
+                        os.path.join(ruta_origen, _MARCADOR_ENVIADO),
+                        "w",
+                        encoding="utf-8",
+                    ) as mf:
+                        mf.write(datetime.now().isoformat())
+                    enviados += 1
+                except Exception as e:
+                    errores.append(f"{cli}/{nombre_ot}: {e}")
+                    print(f"Error enviando {cli}/{nombre_ot}: {e}")
+        finally:
             try:
-                # dirs_exist_ok=True: una OT abierta se re-envía varias veces y
-                # cada envío debe actualizar lo que ya está en el NAS.
-                # '.cerrado' SÍ viaja (marca la OT como final también allá);
-                # '.enviado' no, porque es control local de sincronización.
-                shutil.copytree(
-                    ruta_origen,
-                    ruta_destino,
-                    dirs_exist_ok=True,
-                    ignore=shutil.ignore_patterns(_MARCADOR_ENVIADO),
-                )
-                # Marcar DESPUÉS de copiar: si la copia falla, la OT sigue
-                # pendiente y se reintenta en el próximo envío.
-                with open(
-                    os.path.join(ruta_origen, _MARCADOR_ENVIADO), "w", encoding="utf-8"
-                ) as mf:
-                    mf.write(datetime.now().isoformat())
-                enviados += 1
-            except Exception as e:
-                errores += 1
-                print(f"Error copiando {cliente_folder}/{nombre_ot}: {e}")
+                cliente.close()
+            except Exception:
+                pass
 
-        # Una vez terminado, avisamos a la interfaz gráfica principal
-        ventana.after(0, finalizar_envio, enviados, errores, ruta_bk)
+        ventana.after(0, finalizar_envio, enviados, subidos, errores, ruta_bk, False)
 
     # --- Función que cierra la carga y muestra el resultado ---
-    def finalizar_envio(enviados, errores, ruta_bk=None):
+    def finalizar_envio(enviados, subidos, errores, ruta_bk=None, fatal=False):
         if win_carga.winfo_exists():
             win_carga.destroy()
 
         aviso_bk = (
             f"\n\n🗄️ Backup previo: {os.path.basename(ruta_bk)}" if ruta_bk else ""
         )
-        if errores > 0:
-            messagebox.showwarning("Proceso con Observaciones", f"Se copiaron {enviados} carpeta(s), pero hubo {errores} error(es).\n\nRevisa si hay archivos abiertos por otro usuario en la red.{aviso_bk}")
+        if fatal:
+            messagebox.showerror(
+                "Error de conexión",
+                f"{errores[0]}{aviso_bk}",
+                parent=ventana,
+            )
+            return
+        if errores:
+            messagebox.showwarning(
+                "Proceso con Observaciones",
+                f"Se enviaron {enviados} carpeta(s) ({subidos} archivo(s)), "
+                f"pero {len(errores)} fallaron:\n\n"
+                + "\n".join(f"  • {e}" for e in errores[:8])
+                + aviso_bk,
+                parent=ventana,
+            )
         else:
             messagebox.showinfo(
                 "✅ Envío Exitoso",
-                f"Se enviaron {enviados} carpeta(s) de OT a la red correctamente.{aviso_bk}",
+                f"Se enviaron {enviados} carpeta(s) de OT "
+                f"({subidos} archivo(s)) a {SCP_HOST} correctamente."
+                f"{aviso_bk}",
+                parent=ventana,
             )
 
-    # Lanzamos el copiado en un hilo (Thread) para que la pantalla no se congele
+    # Lanzamos el envío en un hilo (Thread) para que la pantalla no se congele
     threading.Thread(target=tarea_envio, daemon=True).start()
 
 # ============================================================================
 # 8. RECONSTRUCCIÓN / MERGE — rearmar el HTML a partir de los JSON guardados
 # ============================================================================
+def _es_html(valor):
+    """True si el valor ya viene renderizado como filas de tabla."""
+    return isinstance(valor, str) and valor.lstrip().startswith("<")
+
+
+def _fecha_legible(jdata):
+    """Fecha del encabezado del equipo cuando DATA no la trae, desde ESCANEADO."""
+    ts = jdata.get("ESCANEADO", "")
+    try:
+        return datetime.fromisoformat(ts).strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        return ""
+
+
+def filas_hardware_desde_json(jdata):
+    """
+    (ram_html, disk_html, net_html) de un equipo, con cadena de respaldo.
+
+    El HTML del reporte NO es decorativo: el JS lee de estas filas la RAM, los
+    discos y sus seriales para "Copiar Filas" y el CSV de Valida. Un JSON al
+    que le falte el HTML pre-renderizado —viejo, editado a mano o bajado del
+    servidor— daría un reporte que se ve bien pero exporta "RAM Desconocida" y
+    sin discos. Por eso se intenta, en orden:
+
+        1. el HTML ya guardado en DATA (lo normal),
+        2. los datos crudos (ram_raw / disk_raw / net_raw),
+        3. lo que quede: los seriales sueltos o el SN_HDD del nivel superior.
+    """
+    data = jdata.get("DATA") or {}
+
+    # --- RAM ---
+    ram_html = data.get("ram_html")
+    if not _es_html(ram_html):
+        ram_html = render_filas_ram(data.get("ram_raw") or data.get("ram_rows"))
+
+    # --- Discos ---
+    disk_html = data.get("disk_html")
+    if not _es_html(disk_html):
+        discos = data.get("disk_raw") or data.get("disks_data")
+        if not discos:
+            # Sin descripción no se puede inventar el modelo del disco, pero el
+            # serial sí se conserva: es el dato que viaja a Valida.
+            seriales = data.get("disk_serials") or [
+                s for s in str(jdata.get("SN_HDD", "")).split("_") if s
+            ]
+            seriales = [s for s in seriales if s and s != "PENDIENTE"]
+            discos = [{"desc": "Disco interno", "serial": s} for s in seriales]
+        disk_html, _ = render_filas_discos(discos)
+
+    # --- Red ---
+    net_html = data.get("net_rows")
+    if not _es_html(net_html):
+        if _es_html(data.get("net_html")):
+            net_html = data["net_html"]
+        else:
+            net_html = render_filas_red(data.get("net_raw") or data.get("net_rows"))
+
+    return ram_html, disk_html, net_html
+
+
 def _reconstruir_entry_desde_json(jdata):
-    data = jdata.get("DATA", {})
+    data = jdata.get("DATA") or {}
     obs_final = jdata.get("OBS", "Sin observaciones")
     guia_final = jdata.get("GUIA_ID", "Sin Guía")
     ot = jdata.get("OT_ID", "Sin Orden")
@@ -2433,8 +2790,14 @@ def _reconstruir_entry_desde_json(jdata):
             f"<td><b>{office_str}</b>{key_part}</td></tr>"
         )
 
-    safe_id = f"dev-{re.sub(r'[^a-zA-Z0-9]', '', data.get('serial', 'DESCONOCIDO'))}"
-    tag_cls = "tag-entrega" if mov == "Entrega" else "tag-retiro"
+    # El nivel superior del JSON repite serial, modelo y licencia; se usan como
+    # respaldo para que un registro con DATA incompleta —editado a mano o de una
+    # versión vieja— igual salga con su identidad correcta en el reporte.
+    serial = data.get("serial") or jdata.get("SERIAL") or "?"
+    model = data.get("model") or jdata.get("MODELO") or "Desconocido"
+    win_key = data.get("key") or jdata.get("SN_Win") or "N/A"
+
+    safe_id = f"dev-{re.sub(r'[^a-zA-Z0-9]', '', str(serial)) or 'DESCONOCIDO'}"
 
     tiene_fallas = jdata.get("TIENE_FALLAS", False)
     fallas_str = ", ".join(
@@ -2460,9 +2823,7 @@ def _reconstruir_entry_desde_json(jdata):
     comps_json = html.escape(json.dumps(detalle_componentes))
     fusion_json = html.escape(json.dumps(_resumen_fusionado(jdata)))
 
-    ram_html = data.get("ram_html", "<tr><th>RAM</th><td>No detectada</td></tr>")
-    disk_html = data.get("disk_html", "")
-    net_rows = data.get("net_rows", "<tr><td colspan='2'>Sin red activa</td></tr>")
+    ram_html, disk_html, net_rows = filas_hardware_desde_json(jdata)
     bateria_html = (
         f'\n    <tr><th>🔋 Salud Batería</th>'
         f'<td>{data.get("Battery", "No detectada")}</td></tr>'
@@ -2481,10 +2842,10 @@ def _reconstruir_entry_desde_json(jdata):
 
     return construir_entry_html(
         safe_id=safe_id,
-        model=data.get("model", "Desconocido"),
-        serial=data.get("serial", "?"),
-        fecha=data.get("fecha", ""),
-        key=data.get("key", "N/A"),
+        model=model,
+        serial=serial,
+        fecha=data.get("fecha") or _fecha_legible(jdata),
+        key=win_key,
         cpu=data.get("cpu", "Desconocido"),
         mov=mov,
         num_ot=ot,
@@ -2506,18 +2867,25 @@ def _reconstruir_entry_desde_json(jdata):
 
 def _lote_desde_ruta(ruta):
     """
-    Deduce el lote si la carpeta pertenece al árbol de reportes
-    (<GRUPO>/<CLIENTE>/<PREFIJO-NUMERO>). Devuelve None si es una carpeta
-    cualquiera con JSON sueltos.
+    Deduce el lote de una carpeta con forma de OT: <GRUPO>/<CLIENTE>/<PREF-NUM>.
+    Devuelve None si es una carpeta cualquiera con JSON sueltos.
+
+    El grupo (ENTREGA/RETIROS) es la señal fuerte, pero no siempre está: una OT
+    bajada del servidor puede llegar sin sus carpetas padre. En ese caso manda
+    el prefijo de la carpeta (OT- / GUIA-), que ya identifica el movimiento, y
+    si tampoco alcanza se mira el TIPO_MOVIMIENTO de los propios JSON. Sin esto
+    una OT recuperada se reconstruía como "carpeta suelta": HTML aparte, sin
+    FUSIONADO y sin quedar integrada al árbol.
     """
     ruta = os.path.normpath(os.path.abspath(ruta))
     nombre = os.path.basename(ruta)
-    padre = os.path.dirname(ruta)
-    cliente = os.path.basename(padre)
-    grupo = os.path.basename(os.path.dirname(padre))
+    cliente = os.path.basename(os.path.dirname(ruta))
+    if not cliente:
+        return None
+
     for mov, cfg in _MOV_CFG.items():
         pref = cfg["prefijo"] + "-"
-        if grupo == cfg["grupo"] and nombre.startswith(pref) and cliente:
+        if nombre.startswith(pref) and nombre[len(pref):]:
             return hacer_lote(
                 mov,
                 cliente,
@@ -2542,12 +2910,34 @@ def _carpetas_con_equipos(raiz):
     return sorted(encontradas)
 
 
+def _cliente_dominante(equipos):
+    """
+    Cliente que aparece en más JSON del grupo. El JS del reporte saca de ahí el
+    nombre de los archivos que descarga (nombreBaseReporte lee el <title>), así
+    que usar el cliente real y no el nombre de la carpeta hace que el CSV y el
+    fusionado exportados salgan con el mismo nombre que si los hubiera generado
+    el escaneo.
+    """
+    conteo = {}
+    for eq in equipos:
+        cli = (eq.get("CLIENTE") or "").strip()
+        if cli:
+            conteo[cli] = conteo.get(cli, 0) + 1
+    return max(conteo, key=conteo.get) if conteo else ""
+
+
 def _reconstruir_carpeta_suelta(carpeta):
     """
     Rearma el HTML de una carpeta que NO pertenece al árbol de OT (por ejemplo
-    JSON bajados del NAS a un directorio cualquiera). Agrupa por movimiento y
-    escribe archivos '_RECONSTRUIDO.html' sin tocar nada más.
+    JSON bajados del servidor a un directorio cualquiera). Agrupa por movimiento
+    y escribe archivos '_RECONSTRUIDO.html' sin tocar nada más.
     Devuelve (generados, equipos, errores).
+
+    El HTML sale con las mismas funcionalidades que el original: mismos
+    HTML_START/HTML_END (copiar filas, CSV, fusionado, etiquetas), cada equipo
+    con su data-comps y data-fusion, y un <title> con el cliente real para que
+    las descargas salgan con el nombre correcto. Como el fusionado del lote se
+    puede exportar desde el propio reporte, además se escribe uno en disco.
     """
     equipos_por_tipo = {"Entregas": [], "Retiros": []}
     errores = []
@@ -2562,9 +2952,18 @@ def _reconstruir_carpeta_suelta(carpeta):
             # individuales; se ignora para no duplicar.
             if isinstance(jdata, list):
                 continue
-            if "DATA" not in jdata or "SERIAL" not in jdata:
-                errores.append(f"{archivo}: estructura inválida (falta DATA o SERIAL)")
+            # Basta el SERIAL: un registro sin DATA todavía sirve —el resto de
+            # las filas se rearman desde el nivel superior del JSON— y descartarlo
+            # dejaría el equipo fuera del reporte, que es justo lo que hay que
+            # evitar al reconstruir.
+            if not isinstance(jdata, dict) or not jdata.get("SERIAL"):
+                errores.append(f"{archivo}: sin SERIAL, no es un JSON de equipo")
                 continue
+            if not jdata.get("DATA"):
+                errores.append(
+                    f"{archivo}: sin DATA — se reconstruye con los datos del "
+                    "nivel superior (puede faltar hardware)"
+                )
             mov = jdata.get("TIPO_MOVIMIENTO", "Entrega")
             equipos_por_tipo["Entregas" if mov == "Entrega" else "Retiros"].append(jdata)
         except Exception as e:
@@ -2579,7 +2978,8 @@ def _reconstruir_carpeta_suelta(carpeta):
         if not equipos:
             continue
         equipos.sort(key=_clave_orden, reverse=True)
-        titulo = f"{tipo} - {nombre_carpeta}"
+        etiqueta = (_cliente_dominante(equipos) or nombre_carpeta).replace("_", " ")
+        titulo = f"{tipo} - {etiqueta}"
         contenido = HTML_START.replace("Inventario Maestro de Equipos", titulo).replace(
             "<title>Inventario Maestro</title>", f"<title>{titulo}</title>"
         )

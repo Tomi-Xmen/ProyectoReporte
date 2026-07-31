@@ -38,6 +38,8 @@ missing module named 'docx.shared' - imported by C:\Users\Tomas\Desktop\Proyecto
 missing module named 'docx.oxml' - imported by C:\Users\Tomas\Desktop\ProyectoReporte\REPORTE3.py (optional)
 missing module named 'docx.enum' - imported by C:\Users\Tomas\Desktop\ProyectoReporte\REPORTE3.py (optional)
 missing module named docx - imported by C:\Users\Tomas\Desktop\ProyectoReporte\REPORTE3.py (optional)
+missing module named scp - imported by C:\Users\Tomas\Desktop\ProyectoReporte\REPORTE3.py (optional)
+missing module named paramiko - imported by C:\Users\Tomas\Desktop\ProyectoReporte\REPORTE3.py (optional)
 missing module named six.moves.range - imported by six.moves (top-level), dateutil.rrule (top-level)
 runtime module named six.moves - imported by dateutil.tz.tz (top-level), dateutil.tz._factories (top-level), dateutil.tz.win (top-level), dateutil.rrule (top-level)
 missing module named dateutil.tz.tzfile - imported by dateutil.tz (top-level), dateutil.zoneinfo (top-level)

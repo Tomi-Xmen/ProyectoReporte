@@ -7,7 +7,12 @@
       "Bash(timeout 60 python \"C:/Users/Tomas/AppData/Local/Temp/claude/c--Users-Tomas-Desktop-ProyectoReporte/d19dfa0e-c078-4836-ae32-7d9ddcb12730/scratchpad/smoke_gui.py\")",
       "Bash(grep -v \"^[-+]\\\\s*$\")",
       "Bash(node test_js.js)",
-      "Bash(PYTHONIOENCODING=utf-8 python -)"
+      "Bash(PYTHONIOENCODING=utf-8 python -)",
+      "Bash(cd \"c:/Users/Tomas/Desktop/ProyectoReporte\" && echo \"=== imports de nivel superior ===\" && sed -n '1,60p' REPORTE3.py | grep -n \"^import\\\\|^from\\\\|^try\\\\|^except\\\\|AVAILABLE\" *)",
+      "Bash(PYTHONIOENCODING=utf-8 python -c ' *)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\Tomas\\Desktop\\ProyectoReporte"
     ]
   }
 }

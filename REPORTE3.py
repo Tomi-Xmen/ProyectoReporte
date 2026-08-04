@@ -17,7 +17,7 @@ registrar entregas/retiros y generar reportes HTML, JSON y Word.
   6. SCANNER (ejecución)       — get_inventory_fast: corre PS_SCRIPT y parsea.
   7. PERSISTENCIA              — modelo de LOTES por OT/guía, construir_entry_html,
                                  guardar_equipo_general, cerrar_lote, crear_backup,
-                                 enviar a red.
+                                 envío al servidor por SCP.
   8. RECONSTRUCCIÓN / MERGE    — rearmar HTML desde los JSON guardados.
   9. MÓDULOS (Toplevel)        — auditorías, comparación Excel, etiquetas, nombre.
  10. UI PRINCIPAL              — menú, pantalla de escaneo y formulario.
@@ -32,7 +32,13 @@ DISPOSICIÓN EN DISCO (todo cuelga de ./Reportes_Guardados):
 
 Los marcadores dentro de cada carpeta de OT mandan sobre su estado:
 '.cerrado' = finalizada (los recorridos la saltan sin abrirla) y
-'.enviado' = ya subida al NAS (control local; no viaja al servidor).
+'.enviado' = ya subida al servidor (control local; no viaja).
+
+El envío al servidor va por SCP (SSH) y sube SOLO lo que es fuente de verdad o
+entregable: los JSON individuales, el FUSIONADO, el Word de fallas y los
+marcadores. El HTML no viaja: es un derivado y allá se rearma con
+"RECONSTRUIR DESDE JSONs", que produce un reporte idéntico y con todas sus
+funcionalidades (copiar filas, CSV de Valida, fusionado, etiquetas).
 
 NOTA: la apariencia del REPORTE HTML vive en HTML_START/HTML_END y en
 construir_entry_html; no se debe alterar sin querer cambiar el reporte.
@@ -110,17 +116,20 @@ except ImportError:
 # '.cerrado'. El HTML NO se sube: es un derivado y se rearma allá con
 # "RECONSTRUIR DESDE JSONs", que produce un reporte idéntico y 100% funcional.
 # ============================================================================
-SCP_HOST = "192.168.10.15"          # IP o nombre del servidor SSH
+SCP_HOST = "192.168.10.15"         # IP o nombre del servidor SSH
 SCP_PUERTO = 22                    # puerto SSH
-SCP_USUARIO = "Reporte"           # usuario SSH  ⬅️ COMPLETAR
-# Clave privada SSH (id_rsa / .pem). Si queda vacía se intenta con las claves
-# del agente/~/.ssh del usuario de Windows.
-SCP_CLAVE = r"C:\Users\Tomas\.ssh\id_rsa"   # ⬅️ COMPLETAR
-SCP_CLAVE_PASSPHRASE = "1234567890"          # vacío si la clave no tiene passphrase
+SCP_USUARIO = "Reporte"            # usuario SSH
+# Clave privada SSH. Si queda vacía se intenta con las claves del agente o de
+# ~/.ssh del usuario de Windows.
+SCP_CLAVE = r"C:\Users\Tomas\.ssh\id_clonado.pub"
+SCP_CLAVE_PASSPHRASE = ""          # vacío si la clave no tiene passphrase
 # Carpeta base REMOTA (ruta estilo Linux). Debajo se replica el árbol completo
 # <GRUPO>/<CLIENTE>/<OT-553>, igual que en local: así lo que se baja del
 # servidor se reconstruye como OT canónica y no como "carpeta suelta".
-SCP_DESTINO = "/DocumentosLab/Reportes_Guardados"# ⬅️ COMPLETAR
+SCP_DESTINO = (
+    "/srv/dev-disk-by-uuid-50e34ae9-5743-420d-b093-89dfd29299cd"
+    "/DocumentosLab/Reportes_Guardados"
+)
 SCP_TIMEOUT = 20                   # segundos para conectar antes de fallar
 
 
@@ -567,12 +576,14 @@ function copiarFilas(){
       let lbl=dk.desc.toUpperCase().includes("HDD")?"HDD":"SSD";
       txt+=`${lbl}\t${dk.desc}\t${dk.serial}\n`;
     });
-    if(d.transf) txt+=`TRANSFORMADOR\tTRANSFORMADOR ${d.model}\t${d.transf}\n`;
     if(d.office){
       let ver=(d.office.match(/Office\s+([A-Za-z0-9]+)/)||[])[1]||"2016";
       let key=(d.office.match(/Key:\s*([^)]+)/)||[])[1]||"";
       txt+=`OFFICE ${ver}\tHOME AND BUSINESS\t${key.trim()}\n`;
     }
+    if (d.transf) {
+          txt += `\tTRANSFORMADOR\t${d.transf}\n`;
+        }
   });
 
   if (navigator.clipboard && window.isSecureContext) {
@@ -2398,6 +2409,42 @@ def archivos_a_enviar(ruta_ot):
     return archivos
 
 
+def _candidatas_clave_ssh():
+    """
+    Dónde se busca la clave privada, en orden de prioridad.
+
+    El ejecutable se copia a equipos recién clonados por FOG, donde el perfil
+    de usuario es otro y C:\\Users\\<alguien>\\.ssh no existe. Por eso la clave
+    que viaja AL LADO DEL EXE manda sobre la ruta fija: es la única que existe
+    seguro en esa máquina. La ruta de SCP_CLAVE queda como respaldo para el
+    equipo de escritorio donde se trabaja a diario.
+    """
+    nombre = os.path.basename(SCP_CLAVE) if SCP_CLAVE else "id_ed25519"
+    candidatas = [
+        os.path.join(ruta_base_proyecto, nombre),
+        os.path.join(ruta_base_proyecto, "clave_scp"),
+    ]
+    if SCP_CLAVE:
+        candidatas.append(SCP_CLAVE)
+    candidatas.append(os.path.join(os.path.expanduser("~"), ".ssh", nombre))
+    # Sin duplicados y respetando el orden.
+    vistas, unicas = set(), []
+    for c in candidatas:
+        clave = os.path.normcase(os.path.abspath(c))
+        if clave not in vistas:
+            vistas.add(clave)
+            unicas.append(c)
+    return unicas
+
+
+def resolver_clave_ssh():
+    """Primera clave privada que exista de verdad, o None si no hay ninguna."""
+    for ruta in _candidatas_clave_ssh():
+        if os.path.isfile(ruta):
+            return ruta
+    return None
+
+
 def _ruta_remota(*partes):
     """
     Une un path remoto estilo POSIX. No se usa os.path.join: acá corre Windows
@@ -2420,13 +2467,9 @@ def abrir_conexion_scp():
             "Instalar con:  pip install paramiko scp"
         )
 
+    ruta_clave = resolver_clave_ssh()
     clave = None
-    if SCP_CLAVE:
-        if not os.path.isfile(SCP_CLAVE):
-            raise RuntimeError(
-                f"No se encontró la clave SSH:\n{SCP_CLAVE}\n\n"
-                "Revisa la constante SCP_CLAVE."
-            )
+    if ruta_clave:
         # El tipo de clave (RSA/Ed25519/ECDSA) no se conoce de antemano: se
         # prueban todos y se usa el primero que la lea.
         ultimo = None
@@ -2437,16 +2480,23 @@ def abrir_conexion_scp():
         ):
             try:
                 clave = tipo.from_private_key_file(
-                    SCP_CLAVE, password=SCP_CLAVE_PASSPHRASE or None
+                    ruta_clave, password=SCP_CLAVE_PASSPHRASE or None
                 )
                 break
             except Exception as e:
                 ultimo = e
         if clave is None:
             raise RuntimeError(
-                f"No se pudo leer la clave SSH:\n{SCP_CLAVE}\n\n{ultimo}\n\n"
+                f"No se pudo leer la clave SSH:\n{ruta_clave}\n\n{ultimo}\n\n"
                 "Si la clave tiene passphrase, cárgala en SCP_CLAVE_PASSPHRASE."
             )
+    elif SCP_CLAVE:
+        raise RuntimeError(
+            "No se encontró la clave SSH en ninguna de estas ubicaciones:\n\n"
+            + "\n".join(f"  • {r}" for r in _candidatas_clave_ssh())
+            + "\n\nEn un equipo clonado la clave tiene que viajar junto al "
+            "ejecutable, en la misma carpeta."
+        )
 
     cliente = paramiko.SSHClient()
     cliente.load_system_host_keys()
@@ -2481,16 +2531,48 @@ def abrir_conexion_scp():
     return cliente
 
 
-def _mkdir_remoto(cliente, ruta):
-    """Crea la carpeta remota (y sus padres). Falla ruidosamente si no puede."""
-    comando = f"mkdir -p '{ruta}'"
+def _correr_remoto(cliente, comando):
+    """Ejecuta un comando en el servidor. Devuelve (código, stdout, stderr)."""
     _stdin, stdout, stderr = cliente.exec_command(comando, timeout=SCP_TIMEOUT)
-    codigo = stdout.channel.recv_exit_status()
+    salida = stdout.read().decode("utf-8", "replace").strip()
+    error = stderr.read().decode("utf-8", "replace").strip()
+    return stdout.channel.recv_exit_status(), salida, error
+
+
+def verificar_destino_remoto(cliente):
+    """
+    Comprueba que SCP_DESTINO exista y sea escribible ANTES de subir nada.
+
+    La carpeta base debe existir de antes (la crea el NAS al publicar el
+    recurso compartido); acá solo se crean las subcarpetas de cliente y OT. Si
+    la ruta estuviera mal escrita, un 'mkdir -p' la crearía igual —en el disco
+    de sistema y fuera del recurso compartido— y los reportes acabarían en un
+    árbol fantasma que nadie ve por la red. Mejor fallar y decirlo.
+    """
+    codigo, _salida, _error = _correr_remoto(cliente, f"test -d '{SCP_DESTINO}'")
     if codigo != 0:
         raise RuntimeError(
-            f"No se pudo crear la carpeta remota {ruta}: "
-            f"{stderr.read().decode('utf-8', 'replace').strip()}"
+            f"La carpeta base remota no existe:\n{SCP_DESTINO}\n\n"
+            "Tiene que ser la ruta ABSOLUTA de la carpeta compartida en el "
+            "servidor. En OpenMediaVault no es el nombre del recurso: mirá la "
+            "ruta real en Almacenamiento → Carpetas compartidas (suele ser "
+            "/srv/dev-disk-by-uuid-…/<carpeta>).\n\n"
+            "Corregí la constante SCP_DESTINO."
         )
+    codigo, _salida, _error = _correr_remoto(cliente, f"test -w '{SCP_DESTINO}'")
+    if codigo != 0:
+        raise RuntimeError(
+            f"El usuario '{SCP_USUARIO}' no puede escribir en:\n{SCP_DESTINO}\n\n"
+            "Dale permiso de lectura/escritura sobre la carpeta compartida "
+            "(en OMV: Carpetas compartidas → ACL)."
+        )
+
+
+def _mkdir_remoto(cliente, ruta):
+    """Crea la carpeta remota (y sus padres). Falla ruidosamente si no puede."""
+    codigo, _salida, error = _correr_remoto(cliente, f"mkdir -p '{ruta}'")
+    if codigo != 0:
+        raise RuntimeError(f"No se pudo crear la carpeta remota {ruta}: {error}")
 
 
 def enviar_ot_por_scp(cliente, grupo, cliente_folder, nombre_ot, ruta_origen):
@@ -2509,6 +2591,248 @@ def enviar_ot_por_scp(cliente, grupo, cliente_folder, nombre_ot, ruta_origen):
         for ruta in archivos:
             scp.put(ruta, remote_path=_ruta_remota(destino, os.path.basename(ruta)))
     return len(archivos)
+
+
+# ============================================================================
+#  CONTROL CENTRAL POR SSH — OT activa compartida y seguimiento del lote
+# ----------------------------------------------------------------------------
+#  El servidor hace de pizarra común: no corre ningún servicio nuevo, solo
+#  guarda los archivos de control en <SCP_DESTINO>/_control. El equipo de
+#  escritorio publica la OT activa y los equipos recién clonados la leen para
+#  saber a qué OT mandar lo que escanean.
+#
+#      _control/lote_activo.json     OT que recibe lo que se escanea
+#      <GRUPO>/<CLIENTE>/<OT>/       equipos que fueron llegando
+#      <GRUPO>/<CLIENTE>/<OT>/.esperados   seriales que se esperan del lote
+# ============================================================================
+_CONTROL_REMOTO = "_control"
+_ARCHIVO_ESPERADOS = ".esperados"
+
+
+def _ruta_control_remota(*partes):
+    return _ruta_remota(SCP_DESTINO, _CONTROL_REMOTO, *partes)
+
+
+def ruta_remota_lote(lote):
+    """Carpeta de la OT en el servidor, con el mismo árbol que en local."""
+    cfg = _MOV_CFG[lote["mov"]]
+    return _ruta_remota(
+        SCP_DESTINO,
+        cfg["grupo"],
+        lote["cliente"],
+        carpeta_lote(lote["mov"], lote["numero"]),
+    )
+
+
+def _subir_texto(cliente, texto, ruta_destino_remota):
+    """
+    Escribe un archivo de texto en el servidor pasando por un temporal local.
+
+    No se hace con 'echo' por SSH a propósito: los nombres de cliente y las
+    observaciones traen tildes, comillas y espacios, y armar ese comando a mano
+    es una fuente segura de archivos corruptos.
+    """
+    _mkdir_remoto(cliente, os.path.dirname(ruta_destino_remota).replace("\\", "/"))
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".tmp", delete=False, encoding="utf-8"
+    )
+    try:
+        tmp.write(texto)
+        tmp.close()
+        with SCPClient(cliente.get_transport(), socket_timeout=SCP_TIMEOUT) as scp:
+            scp.put(tmp.name, remote_path=ruta_destino_remota)
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except Exception:
+            pass
+
+
+def _leer_texto_remoto(cliente, ruta):
+    """Contenido de un archivo del servidor, o None si no existe."""
+    codigo, salida, _error = _correr_remoto(cliente, f"cat '{ruta}' 2>/dev/null")
+    return salida if codigo == 0 else None
+
+
+def publicar_lote_activo(cliente, lote):
+    """
+    Deja en el servidor cuál es la OT que recibe lo escaneado.
+
+    Es el mismo contenido que el '.lote_activo.json' local, pero compartido:
+    un equipo recién clonado no tiene historia ni archivos previos, así que la
+    única forma de que sepa a qué OT pertenece es preguntárselo al servidor.
+    """
+    datos = {k: lote.get(k, "") for k in ("mov", "cliente", "numero", "numero_sec")}
+    datos["publicado"] = datetime.now().isoformat(timespec="seconds")
+    datos["publicado_por"] = socket.gethostname()
+    _subir_texto(
+        cliente,
+        json.dumps(datos, ensure_ascii=False, indent=2),
+        _ruta_control_remota(_ARCHIVO_LOTE_ACTIVO),
+    )
+
+
+def leer_lote_activo_remoto(cliente):
+    """OT activa publicada en el servidor, o None si no hay ninguna."""
+    crudo = _leer_texto_remoto(cliente, _ruta_control_remota(_ARCHIVO_LOTE_ACTIVO))
+    if not crudo:
+        return None
+    try:
+        cfg = json.loads(crudo)
+        lote = hacer_lote(
+            cfg["mov"], cfg["cliente"], cfg["numero"], numero_sec=cfg.get("numero_sec", "")
+        )
+    except Exception:
+        return None
+    # Una OT ya cerrada no debe seguir recibiendo equipos aunque el puntero
+    # haya quedado publicado.
+    codigo, _s, _e = _correr_remoto(
+        cliente, f"test -e '{_ruta_remota(ruta_remota_lote(lote), _MARCADOR_CERRADO)}'"
+    )
+    return None if codigo == 0 else lote
+
+
+def despublicar_lote_activo(cliente):
+    _correr_remoto(cliente, f"rm -f '{_ruta_control_remota(_ARCHIVO_LOTE_ACTIVO)}'")
+
+
+def enviar_equipo_por_scp(cliente, lote, ruta_json):
+    """
+    Sube el JSON de UN equipo a la OT del servidor.
+
+    Es lo único que manda un equipo clonado, y es deliberado: su carpeta local
+    contiene un solo equipo, así que su FUSIONADO y su HTML describen ese
+    equipo nada más. Subirlos pisaría los del servidor —que acumulan todo el
+    lote— y el reporte de la OT quedaría con un solo equipo. Los derivados se
+    rehacen en el panel central, que sí ve el lote completo.
+    """
+    destino = ruta_remota_lote(lote)
+    _mkdir_remoto(cliente, destino)
+    with SCPClient(cliente.get_transport(), socket_timeout=SCP_TIMEOUT) as scp:
+        scp.put(ruta_json, remote_path=_ruta_remota(destino, os.path.basename(ruta_json)))
+    return _ruta_remota(destino, os.path.basename(ruta_json))
+
+
+_SEPARADOR_REMOTO = "===ARCHIVO:"
+
+
+def equipos_remotos(cliente, lote):
+    """
+    Equipos que ya llegaron a la OT en el servidor: [{SERIAL, MODELO, ...}].
+
+    Se traen todos los JSON en UNA sola vuelta (un 'cat' encadenado) en vez de
+    un comando por archivo: con un lote de decenas de equipos la diferencia
+    entre una conexión y decenas es la diferencia entre un panel usable y uno
+    que tarda medio minuto en refrescar.
+    """
+    carpeta = ruta_remota_lote(lote)
+    comando = (
+        f"for f in '{carpeta}'/*.json; do "
+        f'[ -e "$f" ] || continue; '
+        f'case "$f" in *_FUSIONADO.json) continue;; esac; '
+        f'echo "{_SEPARADOR_REMOTO}$(basename "$f")"; cat "$f"; '
+        f"done"
+    )
+    codigo, salida, _error = _correr_remoto(cliente, comando)
+    if codigo != 0 or not salida:
+        return []
+
+    equipos = []
+    for bloque in salida.split(_SEPARADOR_REMOTO):
+        if not bloque.strip():
+            continue
+        nombre, _, cuerpo = bloque.partition("\n")
+        try:
+            jdata = json.loads(cuerpo)
+        except Exception:
+            continue
+        if isinstance(jdata, dict) and jdata.get("SERIAL"):
+            jdata["_archivo"] = nombre.strip()
+            equipos.append(jdata)
+    equipos.sort(key=_clave_orden, reverse=True)
+    return equipos
+
+
+def leer_esperados(cliente, lote):
+    """Seriales que se esperan en el lote. Lista vacía si no se cargó ninguna."""
+    crudo = _leer_texto_remoto(
+        cliente, _ruta_remota(ruta_remota_lote(lote), _ARCHIVO_ESPERADOS)
+    )
+    if not crudo:
+        return []
+    try:
+        datos = json.loads(crudo)
+        return [str(s).strip().upper() for s in datos if str(s).strip()]
+    except Exception:
+        return []
+
+
+def guardar_esperados(cliente, lote, seriales):
+    """Fija la lista de seriales que deben llegar antes de dar el lote por cerrado."""
+    limpios = []
+    for s in seriales:
+        s = str(s).strip().upper()
+        if s and s not in limpios:
+            limpios.append(s)
+    _subir_texto(
+        cliente,
+        json.dumps(limpios, ensure_ascii=False, indent=2),
+        _ruta_remota(ruta_remota_lote(lote), _ARCHIVO_ESPERADOS),
+    )
+    return limpios
+
+
+def descargar_equipos_remotos(cliente, lote):
+    """
+    Baja a la carpeta local de la OT los JSON que mandaron los equipos y rehace
+    el HTML y el FUSIONADO. Devuelve (bajados, total_equipos).
+
+    Es el paso que cierra el circuito: cada equipo clonado sube su JSON y nada
+    más, así que el reporte completo del lote no existe en ningún lado hasta
+    que alguien junta las partes. Acá se juntan.
+    """
+    carpeta = ruta_remota_lote(lote)
+    codigo, salida, _error = _correr_remoto(
+        cliente,
+        f"ls -1 '{carpeta}'/*.json 2>/dev/null | grep -v '_FUSIONADO.json$' || true",
+    )
+    remotos = [l.strip() for l in salida.splitlines() if l.strip()] if codigo == 0 else []
+    if not remotos:
+        return 0, contar_equipos(lote["ruta"])
+
+    os.makedirs(lote["ruta"], exist_ok=True)
+    bajados = 0
+    with SCPClient(cliente.get_transport(), socket_timeout=SCP_TIMEOUT) as scp:
+        for remoto in remotos:
+            local = os.path.join(lote["ruta"], os.path.basename(remoto))
+            try:
+                scp.get(remoto, local_path=local)
+                bajados += 1
+            except Exception as e:
+                print(f"No se pudo bajar {remoto}: {e}")
+    guardar_meta_lote(lote)
+    return bajados, regenerar_lote(lote)
+
+
+def cerrar_lote_remoto(cliente, lote, total):
+    """Marca la OT como cerrada en el servidor y baja el puntero de OT activa."""
+    marca = json.dumps(
+        {
+            "cliente": lote["cliente"],
+            "numero": lote["numero"],
+            "equipos": total,
+            "cerrado": datetime.now().isoformat(timespec="seconds"),
+            "cerrado_por": socket.gethostname(),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    _subir_texto(
+        cliente, marca, _ruta_remota(ruta_remota_lote(lote), _MARCADOR_CERRADO)
+    )
+    activo = leer_lote_activo_remoto(cliente)
+    if activo and os.path.normcase(activo["ruta"]) == os.path.normcase(lote["ruta"]):
+        despublicar_lote_activo(cliente)
 
 
 def accion_enviar_red(ventana):
@@ -2635,9 +2959,18 @@ def accion_enviar_red(ventana):
         enviados = 0
         subidos = 0
 
+        # Conexión y destino se validan juntos y ANTES del primer archivo: si
+        # algo está mal, ninguna OT queda marcada como enviada.
         try:
             cliente = abrir_conexion_scp()
         except Exception as e:
+            ventana.after(0, finalizar_envio, 0, 0, [str(e)], ruta_bk, True)
+            return
+
+        try:
+            verificar_destino_remoto(cliente)
+        except Exception as e:
+            cliente.close()
             ventana.after(0, finalizar_envio, 0, 0, [str(e)], ruta_bk, True)
             return
 
@@ -2867,15 +3200,14 @@ def _reconstruir_entry_desde_json(jdata):
 
 def _lote_desde_ruta(ruta):
     """
-    Deduce el lote de una carpeta con forma de OT: <GRUPO>/<CLIENTE>/<PREF-NUM>.
+    Deduce el lote de una carpeta con forma de OT: <CLIENTE>/<PREFIJO-NUMERO>.
     Devuelve None si es una carpeta cualquiera con JSON sueltos.
 
-    El grupo (ENTREGA/RETIROS) es la señal fuerte, pero no siempre está: una OT
-    bajada del servidor puede llegar sin sus carpetas padre. En ese caso manda
-    el prefijo de la carpeta (OT- / GUIA-), que ya identifica el movimiento, y
-    si tampoco alcanza se mira el TIPO_MOVIMIENTO de los propios JSON. Sin esto
-    una OT recuperada se reconstruía como "carpeta suelta": HTML aparte, sin
-    FUSIONADO y sin quedar integrada al árbol.
+    No se exige el nivel de grupo (ENTREGA/RETIROS): una OT bajada del servidor
+    puede llegar sin sus carpetas padre, y el prefijo de la carpeta —OT- o
+    GUIA-— ya identifica el movimiento sin ambigüedad. Sin esto una OT
+    recuperada se reconstruía como "carpeta suelta": HTML aparte, sin FUSIONADO
+    y sin quedar integrada al árbol.
     """
     ruta = os.path.normpath(os.path.abspath(ruta))
     nombre = os.path.basename(ruta)
@@ -2936,8 +3268,7 @@ def _reconstruir_carpeta_suelta(carpeta):
     El HTML sale con las mismas funcionalidades que el original: mismos
     HTML_START/HTML_END (copiar filas, CSV, fusionado, etiquetas), cada equipo
     con su data-comps y data-fusion, y un <title> con el cliente real para que
-    las descargas salgan con el nombre correcto. Como el fusionado del lote se
-    puede exportar desde el propio reporte, además se escribe uno en disco.
+    las descargas salgan con el nombre correcto.
     """
     equipos_por_tipo = {"Entregas": [], "Retiros": []}
     errores = []
@@ -2953,16 +3284,16 @@ def _reconstruir_carpeta_suelta(carpeta):
             if isinstance(jdata, list):
                 continue
             # Basta el SERIAL: un registro sin DATA todavía sirve —el resto de
-            # las filas se rearman desde el nivel superior del JSON— y descartarlo
-            # dejaría el equipo fuera del reporte, que es justo lo que hay que
-            # evitar al reconstruir.
+            # las filas se rearman desde el nivel superior del JSON— y
+            # descartarlo dejaría al equipo fuera del reporte, que es justo lo
+            # que hay que evitar al reconstruir.
             if not isinstance(jdata, dict) or not jdata.get("SERIAL"):
                 errores.append(f"{archivo}: sin SERIAL, no es un JSON de equipo")
                 continue
             if not jdata.get("DATA"):
                 errores.append(
-                    f"{archivo}: sin DATA — se reconstruye con los datos del "
-                    "nivel superior (puede faltar hardware)"
+                    f"{archivo}: sin DATA — reconstruido desde el nivel superior "
+                    "(puede faltar detalle de hardware)"
                 )
             mov = jdata.get("TIPO_MOVIMIENTO", "Entrega")
             equipos_por_tipo["Entregas" if mov == "Entrega" else "Retiros"].append(jdata)
@@ -2994,10 +3325,38 @@ def _reconstruir_carpeta_suelta(carpeta):
         contenido += "\n".join(entries) + HTML_END
         contenido = fijar_total_count(contenido, len(entries))
 
-        nombre_html = f"Reporte_{tipo}_{nombre_carpeta}_{fecha_hoy}_RECONSTRUIDO.html"
-        with open(os.path.join(carpeta, nombre_html), "w", encoding="utf-8") as f:
+        base = f"Reporte_{tipo}_{nombre_carpeta}_{fecha_hoy}_RECONSTRUIDO"
+        with open(os.path.join(carpeta, base + ".html"), "w", encoding="utf-8") as f:
             f.write(contenido)
-        generados.append(nombre_html)
+        generados.append(base + ".html")
+
+        # El fusionado también se deja en disco: es lo que se sube a los
+        # sistemas y no debería depender de que alguien abra el HTML y aprete
+        # el botón de descarga.
+        with open(
+            os.path.join(carpeta, base + "_FUSIONADO.json"), "w", encoding="utf-8"
+        ) as f:
+            json.dump(
+                [_resumen_fusionado(eq) for eq in equipos],
+                f,
+                ensure_ascii=False,
+                indent=4,
+            )
+        generados.append(base + "_FUSIONADO.json")
+
+        # Retiros con fallas: el Word es un entregable, no un derivado visual.
+        malos = [e for e in equipos if e.get("TIENE_FALLAS")]
+        if tipo == "Retiros" and malos and DOCX_AVAILABLE:
+            try:
+                generar_informe_word(
+                    _cliente_dominante(equipos) or nombre_carpeta,
+                    malos,
+                    carpeta,
+                    nombre_carpeta,
+                )
+            except Exception as e:
+                errores.append(f"Informe Word: {e}")
+
         total += len(entries)
 
     return generados, total, errores
@@ -4394,6 +4753,254 @@ def abrir_modulo_agregar_transformador(ventana_padre):
 
 
 
+def abrir_panel_clonacion(ventana_padre):
+    """
+    Panel central del flujo de clonación: qué OT están tomando los equipos
+    clonados, cuáles ya llegaron, cuáles faltan, y el cierre del lote.
+
+    Todo el estado vive en el servidor, no acá: esta ventana lo lee y lo
+    escribe, pero cualquier equipo puede abrirla y ver lo mismo.
+    """
+    win = ventana_modal(ventana_padre, "Panel de clonación — OT activa", "980x680")
+    titulo_ui(win, "🛰️ Panel de clonación")
+
+    estado = {"lote": None, "llegados": [], "esperados": []}
+
+    # --- Encabezado: qué OT está publicada ---
+    lbl_ot = tk.Label(
+        win, text="Consultando el servidor…", font=fuente(11, True),
+        bg="#fef3c7", fg="#92400e", pady=10,
+    )
+    lbl_ot.pack(fill="x", padx=20, pady=(0, 8))
+
+    lbl_resumen = tk.Label(
+        win, text="", font=fuente(10, True), bg=COLORS["fondo"], fg=COLORS["gris_oscuro"]
+    )
+    lbl_resumen.pack(pady=(0, 6))
+
+    tree = treeview_auditoria(
+        win,
+        [
+            ("estado", 90, "Estado"),
+            ("serial", 170, "N° de Serie"),
+            ("modelo", 260, "Modelo"),
+            ("fecha", 140, "Escaneado"),
+            ("obs", 260, "Observaciones"),
+        ],
+        height=15,
+    )
+
+    def _con_cliente(tarea, titulo_error="Error"):
+        """Abre la conexión, corre la tarea y la cierra siempre."""
+        try:
+            cliente = abrir_conexion_scp()
+        except Exception as e:
+            messagebox.showerror(titulo_error, str(e), parent=win)
+            return None
+        try:
+            return tarea(cliente)
+        except Exception as e:
+            messagebox.showerror(titulo_error, str(e), parent=win)
+            return None
+        finally:
+            try:
+                cliente.close()
+            except Exception:
+                pass
+
+    def refrescar():
+        def tarea(cliente):
+            lote = leer_lote_activo_remoto(cliente)
+            if not lote:
+                return None, [], []
+            return lote, equipos_remotos(cliente, lote), leer_esperados(cliente, lote)
+
+        datos = _con_cliente(tarea, "No se pudo consultar el servidor")
+        if datos is None:
+            return
+        lote, llegados, esperados = datos
+        estado.update(lote=lote, llegados=llegados, esperados=esperados)
+
+        for fila in tree.get_children():
+            tree.delete(fila)
+
+        if not lote:
+            lbl_ot.config(
+                text="⚠️  No hay ninguna OT publicada — los equipos clonados no "
+                     "tienen dónde mandar sus datos",
+                bg="#fef3c7", fg="#92400e",
+            )
+            lbl_resumen.config(text="")
+            return
+
+        lbl_ot.config(
+            text=f"📍 OT publicada: {etiqueta_lote(lote)}",
+            bg="#dcfce7", fg="#166534",
+        )
+
+        recibidos = {}
+        for eq in llegados:
+            recibidos[str(eq.get("SERIAL", "")).strip().upper()] = eq
+
+        for sn, eq in recibidos.items():
+            marca = "esperado" if not esperados or sn in [
+                s.upper() for s in esperados
+            ] else "sobra"
+            tree.insert(
+                "", "end",
+                values=(
+                    "✓ llegó" if marca == "esperado" else "⚠ no esperado",
+                    eq.get("SERIAL", ""),
+                    eq.get("MODELO", "") or (eq.get("DATA") or {}).get("model", ""),
+                    (eq.get("DATA") or {}).get("fecha", "") or eq.get("ESCANEADO", ""),
+                    eq.get("OBS", ""),
+                ),
+                tags=("ok" if marca == "esperado" else "sobra",),
+            )
+
+        faltan = [s for s in esperados if s.upper() not in recibidos]
+        for sn in faltan:
+            tree.insert(
+                "", "end",
+                values=("✗ falta", sn, "—", "—", "todavía no envió"),
+                tags=("falta",),
+            )
+
+        if esperados:
+            lbl_resumen.config(
+                text=f"Llegaron {len(recibidos)} de {len(esperados)} esperados  ·  "
+                     f"faltan {len(faltan)}"
+            )
+        else:
+            lbl_resumen.config(
+                text=f"{len(recibidos)} equipo(s) recibidos  ·  "
+                     "sin lista esperada cargada"
+            )
+
+    def publicar():
+        lote = cargar_lote_activo()
+        if not lote:
+            messagebox.showwarning(
+                "Sin OT activa",
+                "No hay una OT activa en este equipo.\n\n"
+                "Creá o cambiá de OT desde el menú y volvé a publicar.",
+                parent=win,
+            )
+            return
+        if not messagebox.askyesno(
+            "Publicar OT",
+            f"¿Publicar {etiqueta_lote(lote)} como OT activa?\n\n"
+            "Todos los equipos que se clonen a partir de ahora van a mandar "
+            "sus datos a esta OT.",
+            parent=win,
+        ):
+            return
+        if _con_cliente(
+            lambda c: publicar_lote_activo(c, lote) or True, "No se pudo publicar"
+        ):
+            messagebox.showinfo("Publicada", f"{etiqueta_lote(lote)}", parent=win)
+            refrescar()
+
+    def cargar_esperados():
+        lote = estado["lote"]
+        if not lote:
+            messagebox.showwarning("Sin OT", "Primero publicá una OT.", parent=win)
+            return
+        dlg = ventana_modal(win, "Seriales esperados", "460x520")
+        titulo_ui(dlg, "Seriales que deben llegar", size=12)
+        tk.Label(
+            dlg, text="Uno por línea. Pegá la lista de equipos a clonar.",
+            font=fuente(9), bg=COLORS["fondo"], fg=COLORS["gris"],
+        ).pack(pady=(0, 6))
+        caja = tk.Text(dlg, font=fuente(9), relief="solid", bd=1)
+        caja.pack(fill="both", expand=True, padx=16)
+        caja.insert("1.0", "\n".join(estado["esperados"]))
+
+        def guardar():
+            seriales = [l.strip() for l in caja.get("1.0", "end").splitlines()]
+            seriales = [s for s in seriales if s]
+            guardados = _con_cliente(
+                lambda c: guardar_esperados(c, lote, seriales), "No se pudo guardar"
+            )
+            if guardados is not None:
+                dlg.destroy()
+                messagebox.showinfo(
+                    "Lista guardada", f"{len(guardados)} serial(es).", parent=win
+                )
+                refrescar()
+
+        boton_accion(dlg, "💾 Guardar lista", guardar, COLORS["verde"]).pack(pady=10)
+
+    def traer_y_reconstruir():
+        lote = estado["lote"]
+        if not lote:
+            messagebox.showwarning("Sin OT", "No hay OT publicada.", parent=win)
+            return
+        res = _con_cliente(
+            lambda c: descargar_equipos_remotos(c, lote), "No se pudo traer"
+        )
+        if res is None:
+            return
+        bajados, total = res
+        messagebox.showinfo(
+            "Reconstrucción lista",
+            f"Se trajeron {bajados} JSON del servidor.\n\n"
+            f"La OT quedó con {total} equipo(s) y su HTML y JSON FUSIONADO "
+            f"ya se regeneraron en:\n{lote['ruta']}",
+            parent=win,
+        )
+
+    def cerrar_remoto():
+        lote = estado["lote"]
+        if not lote:
+            messagebox.showwarning("Sin OT", "No hay OT publicada.", parent=win)
+            return
+        faltan = [
+            s for s in estado["esperados"]
+            if s.upper() not in {
+                str(e.get("SERIAL", "")).strip().upper() for e in estado["llegados"]
+            }
+        ]
+        aviso = ""
+        if faltan:
+            aviso = (
+                f"\n\n⚠️ Todavía faltan {len(faltan)} equipo(s):\n"
+                + "\n".join(f"  • {s}" for s in faltan[:10])
+                + ("\n  …" if len(faltan) > 10 else "")
+                + "\n\nSi cerrás ahora, esos equipos ya no van a poder enviar."
+            )
+        if not messagebox.askyesno(
+            "Cerrar lote",
+            f"¿Cerrar {etiqueta_lote(lote)} en el servidor?\n\n"
+            f"Recibidos: {len(estado['llegados'])} equipo(s).{aviso}",
+            parent=win,
+        ):
+            return
+        if _con_cliente(
+            lambda c: cerrar_lote_remoto(c, lote, len(estado["llegados"])) or True,
+            "No se pudo cerrar",
+        ):
+            messagebox.showinfo(
+                "Lote cerrado",
+                "La OT quedó cerrada en el servidor y ya no es la OT activa.",
+                parent=win,
+            )
+            refrescar()
+
+    frame_btns = tk.Frame(win, bg=COLORS["fondo"])
+    frame_btns.pack(pady=12)
+    for texto, comando, color in (
+        ("🔄 Refrescar", refrescar, COLORS["celeste"]),
+        ("📤 Publicar OT activa", publicar, COLORS["azul"]),
+        ("📋 Seriales esperados", cargar_esperados, COLORS["pizarra"]),
+        ("⬇️ Traer y reconstruir", traer_y_reconstruir, COLORS["morado"]),
+        ("✅ Cerrar lote", cerrar_remoto, COLORS["verde"]),
+    ):
+        boton_accion(frame_btns, texto, comando, color).pack(side="left", padx=4)
+
+    refrescar()
+
+
 def abrir_modulo_cambiar_nombre(ventana_padre):
     # 1. Obtener el número de serie de la BIOS
     try:
@@ -4619,7 +5226,7 @@ def mostrar_menu_principal(ventana):
     _seccion_menu(frame_btns, "Archivo y respaldo")
     boton_menu(
         frame_btns,
-        "🚀 ENVIAR CARPETAS A RED",
+        f"🚀 ENVIAR OT AL SERVIDOR (SCP · {SCP_HOST})",
         lambda: accion_enviar_red(ventana),
         COLORS["naranja"],
         size=10,
@@ -4629,6 +5236,13 @@ def mostrar_menu_principal(ventana):
         "🔧 RECONSTRUIR / REPARAR OT DESDE JSONs",
         lambda: accion_unir_Json(ventana),
         COLORS["morado"],
+        size=10,
+    )
+    boton_menu(
+        frame_btns,
+        "🛰️ PANEL DE CLONACIÓN (OT activa y seguimiento)",
+        lambda: abrir_panel_clonacion(ventana),
+        COLORS["verde_esmeralda"],
         size=10,
     )
 
@@ -4923,9 +5537,373 @@ def construir_ui_formulario(ventana, data, lote):
 
 
 # ============================================================================
-# 11. ENTRYPOINT
+# 11. MODO CLONACIÓN (sin menú) — para el post-script de FOG
+# ----------------------------------------------------------------------------
+# Se invoca como:  REPORTE3.exe --clonacion [--espera SEGUNDOS]
+#
+# Corre solo en el equipo recién clonado: pregunta al servidor a qué OT
+# pertenece, escanea, abre UNA ventana para las observaciones y manda el JSON
+# por SCP. No hay menú ni OT que elegir: el operador no decide nada que pueda
+# equivocarse, y si se distrae, el equipo se manda igual al vencer la espera.
 # ============================================================================
+_ESPERA_CLONACION = 180  # segundos antes del envío automático
+
+# Con --sin-ui no se abre NINGUNA ventana: ni la de observaciones ni los avisos
+# finales. Es el modo que necesita el post-script de FOG, donde no hay nadie
+# para cerrar un messagebox y el proceso se quedaría colgado sin devolver el
+# código de salida.
+#
+# Que no haya ventanas no quiere decir que no haya operador: si el programa
+# corre en un cmd, las observaciones se piden por consola con la misma cuenta
+# regresiva, y recién después se hace el SCP. Sin consola (post-script de FOG
+# de verdad) se manda directo.
+_SIN_UI = False
+
+
+def _log_clon(texto):
+    """Traza para el post-script de FOG, que se queda con la salida estándar."""
+    print(f"[REPORTE3] {texto}", flush=True)
+
+
+def _hay_consola():
+    """
+    ¿Hay alguien del otro lado del teclado? Con el .exe lanzado desde un cmd
+    sys.stdin es la consola; lanzado por el post-script de FOG o con la entrada
+    redirigida, no hay a quién preguntarle nada.
+    """
+    try:
+        return sys.stdin is not None and sys.stdin.isatty()
+    except Exception:
+        return False
+
+
+def _leer_linea_con_espera(prompt, espera):
+    """
+    Lee una línea de la consola con cuenta regresiva. Devuelve (texto, respondió).
+
+    Apenas el operador toca una tecla se cancela el auto-envío: si está
+    escribiendo la observación no se le puede cortar la frase por la mitad.
+    Con espera <= 0 se espera indefinidamente, igual que en la ventana.
+    """
+    print(prompt, end="", flush=True)
+    try:
+        import msvcrt
+    except ImportError:  # fuera de Windows no hay cuenta regresiva posible
+        return input().strip(), True
+
+    escrito = []
+    limite = time.monotonic() + espera if espera > 0 else None
+    ultimo_aviso = None
+
+    while True:
+        if msvcrt.kbhit():
+            tecla = msvcrt.getwch()
+            if tecla in ("\x00", "\xe0"):  # flechas y F1..F12 llegan de a dos
+                msvcrt.getwch()
+                continue
+            if tecla == "\x03":            # Ctrl+C
+                raise KeyboardInterrupt
+            if tecla in ("\r", "\n"):
+                print(flush=True)
+                return "".join(escrito).strip(), True
+            if tecla == "\b":
+                if escrito:
+                    escrito.pop()
+                    print("\b \b", end="", flush=True)
+                continue
+            escrito.append(tecla)
+            print(tecla, end="", flush=True)
+            limite = None                  # ya está escribiendo: no se le corta
+            continue
+
+        if limite is not None:
+            restante = limite - time.monotonic()
+            if restante <= 0:
+                print("\n[REPORTE3] Espera agotada: se envía automáticamente.",
+                      flush=True)
+                return "".join(escrito).strip(), False
+            # Hacia arriba: con int() a secas la espera se acortaba un segundo
+            # y --espera 1 no llegaba a mostrarse nunca.
+            segundos = int(restante) + 1
+            if segundos != ultimo_aviso and segundos % 30 == 0:
+                ultimo_aviso = segundos
+                print(f"\n(envío automático en {segundos}s) {prompt}"
+                      f"{''.join(escrito)}", end="", flush=True)
+        time.sleep(0.05)
+
+
+def _observaciones_consola(data, lote, espera):
+    """
+    La ventana de observaciones, pero en la consola. Mismo contrato que
+    _ventana_observaciones: devuelve (observaciones, tiene_fallas, enviar), y
+    todo esto pasa ANTES del SCP.
+    """
+    print("")
+    print("=" * 64)
+    print(f"  EQUIPO ESCANEADO - {etiqueta_lote(lote)}")
+    print("=" * 64)
+    for etiqueta, valor in (
+        ("Modelo", data.get("model", "?")),
+        ("N de Serie", data.get("serial", "?")),
+        ("Procesador", data.get("cpu", "?")),
+        ("Licencia Windows", data.get("key", "N/A")),
+    ):
+        print(f"  {etiqueta:<18}{valor}")
+    print("-" * 64)
+    if espera > 0:
+        print(f"  Si no escribís nada, se envía solo en {espera}s.")
+    print("  Ctrl+C cancela el registro.")
+    print("")
+
+    try:
+        obs, respondio = _leer_linea_con_espera(
+            "Observaciones (Enter = ninguna): ", espera
+        )
+        if not respondio:
+            return obs, False, True
+        # Ya está frente al teclado: para la segunda pregunta alcanza con un
+        # margen corto, no hace falta repetir la espera larga.
+        resp, _ = _leer_linea_con_espera("¿El equipo tiene fallas? [s/N]: ", 60)
+        return obs, resp.strip().lower().startswith("s"), True
+    except KeyboardInterrupt:
+        print("\n[REPORTE3] Cancelado por el operador.", flush=True)
+        return "", False, False
+
+
+def _ventana_observaciones(data, lote, espera):
+    """
+    Ventana única del modo clonación: muestra lo escaneado y toma las
+    observaciones. Devuelve (observaciones, tiene_fallas, enviar).
+
+    'enviar' sale en False solo si el operador cancela a propósito; si la
+    ventana se cierra o se agota la espera se manda igual, porque el costo de
+    perder el registro de un equipo ya clonado es mucho mayor que el de
+    mandarlo sin observaciones.
+    """
+    resultado = {"obs": "", "fallas": False, "enviar": True}
+
+    win = tk.Tk()
+    win.title(f"Registro de equipo — {etiqueta_lote(lote)}")
+    win.configure(bg=COLORS["fondo"])
+    win.attributes("-topmost", True)
+    win.geometry("560x460")
+
+    titulo_ui(win, "🖥️ Equipo escaneado", size=14, pady=(16, 4))
+    tk.Label(
+        win,
+        text=etiqueta_lote(lote),
+        font=fuente(10, True),
+        bg="#dcfce7",
+        fg="#166534",
+        pady=6,
+    ).pack(fill="x", padx=24, pady=(0, 10))
+
+    marco = tk.Frame(win, bg="white", relief="flat", bd=1)
+    marco.pack(fill="x", padx=24)
+    for etiqueta, valor in (
+        ("Modelo", data.get("model", "?")),
+        ("N° de Serie", data.get("serial", "?")),
+        ("Procesador", data.get("cpu", "?")),
+        ("Licencia Windows", data.get("key", "N/A")),
+    ):
+        fila = tk.Frame(marco, bg="white")
+        fila.pack(fill="x", padx=10, pady=3)
+        tk.Label(
+            fila, text=f"{etiqueta}:", font=fuente(9, True), bg="white",
+            fg=COLORS["gris_oscuro"], width=16, anchor="w",
+        ).pack(side="left")
+        tk.Label(
+            fila, text=valor, font=fuente(9), bg="white", fg=COLORS["azul"],
+            anchor="w", wraplength=330, justify="left",
+        ).pack(side="left", fill="x", expand=True)
+
+    tk.Label(
+        win, text="Observaciones (opcional)", font=fuente(9, True),
+        bg=COLORS["fondo"], fg=COLORS["gris_oscuro"],
+    ).pack(anchor="w", padx=24, pady=(14, 2))
+    txt_obs = tk.Text(win, height=4, font=fuente(9), relief="solid", bd=1)
+    txt_obs.pack(fill="x", padx=24)
+    txt_obs.focus_set()
+
+    var_fallas = tk.BooleanVar(value=False)
+    tk.Checkbutton(
+        win, text="El equipo tiene fallas", variable=var_fallas,
+        font=fuente(9), bg=COLORS["fondo"], fg="#991b1b",
+        activebackground=COLORS["fondo"], selectcolor="white",
+    ).pack(anchor="w", padx=22, pady=(6, 0))
+
+    lbl_cuenta = tk.Label(
+        win, text="", font=fuente(8), bg=COLORS["fondo"], fg=COLORS["gris"]
+    )
+    lbl_cuenta.pack(pady=(6, 0))
+
+    def terminar(enviar=True):
+        resultado["obs"] = txt_obs.get("1.0", "end").strip()
+        resultado["fallas"] = var_fallas.get()
+        resultado["enviar"] = enviar
+        try:
+            win.destroy()
+        except Exception:
+            pass
+
+    frame_btn = tk.Frame(win, bg=COLORS["fondo"])
+    frame_btn.pack(pady=10)
+    boton_accion(frame_btn, "✅ ENVIAR AL SERVIDOR", lambda: terminar(True),
+                 COLORS["verde"]).pack(side="left", padx=6)
+    boton_accion(frame_btn, "Cancelar", lambda: terminar(False),
+                 COLORS["gris"]).pack(side="left", padx=6)
+
+    # Cerrar con la X equivale a enviar: es lo que hace el operador apurado.
+    win.protocol("WM_DELETE_WINDOW", lambda: terminar(True))
+
+    restante = {"seg": max(0, int(espera))}
+
+    def tic():
+        if restante["seg"] <= 0:
+            _log_clon("Espera agotada: se envía automáticamente.")
+            terminar(True)
+            return
+        minutos, seg = divmod(restante["seg"], 60)
+        lbl_cuenta.config(text=f"Envío automático en {minutos}:{seg:02d}")
+        restante["seg"] -= 1
+        win.after(1000, tic)
+
+    if espera > 0:
+        tic()
+    win.mainloop()
+    return resultado["obs"], resultado["fallas"], resultado["enviar"]
+
+
+def modo_clonacion(espera=_ESPERA_CLONACION, sin_ui=False):
+    """
+    Flujo completo del equipo clonado. Devuelve el código de salida del proceso
+    (0 = enviado), pensado para que el post-script de FOG sepa si funcionó.
+
+    Con sin_ui=True no se abre ninguna ventana: si corre en un cmd las
+    observaciones se piden por consola antes del SCP, y si no hay consola el
+    equipo se manda sin observaciones. Los errores quedan solo en el log.
+    """
+    global _SIN_UI
+    _SIN_UI = sin_ui
+    _log_clon(f"Modo clonación en {socket.gethostname()}")
+
+    try:
+        cliente = abrir_conexion_scp()
+    except Exception as e:
+        _log_clon(f"ERROR de conexión: {e}")
+        _avisar_error_clonacion("No se pudo conectar al servidor", str(e))
+        return 2
+
+    try:
+        lote = leer_lote_activo_remoto(cliente)
+        if not lote:
+            msg = (
+                "No hay ninguna OT activa publicada en el servidor.\n\n"
+                "Activá una OT desde el panel central antes de clonar."
+            )
+            _log_clon("ERROR: sin OT activa publicada")
+            _avisar_error_clonacion("Sin OT activa", msg)
+            return 3
+        _log_clon(f"OT activa: {etiqueta_lote(lote)}")
+
+        _log_clon("Escaneando hardware…")
+        data = get_inventory_fast()
+        if not data:
+            _log_clon("ERROR: el escaneo falló")
+            _avisar_error_clonacion(
+                "No se pudo escanear",
+                "El escaneo de hardware falló. Revisá el registro y reintentá.",
+            )
+            return 4
+        _log_clon(f"Equipo: {data.get('model')} / {data.get('serial')}")
+
+        if sin_ui and _hay_consola():
+            obs, tiene_fallas, enviar = _observaciones_consola(data, lote, espera)
+        elif sin_ui:
+            _log_clon("Sin UI y sin consola: se envía sin observaciones.")
+            obs, tiene_fallas, enviar = "", False, True
+        else:
+            obs, tiene_fallas, enviar = _ventana_observaciones(data, lote, espera)
+        if not enviar:
+            _log_clon("Cancelado por el operador.")
+            return 1
+
+        # Se guarda con la misma función que el flujo normal: el JSON queda
+        # idéntico al de un escaneo manual, así el panel y la reconstrucción
+        # no tienen que distinguir de dónde vino.
+        comps = [{"nombre": "Estado general", "estado": "MALO" if tiene_fallas else "OK",
+                  "obs": obs}] if tiene_fallas else []
+        guardar_equipo_general(lote, data, obs, False, "", "", comps)
+        ruta_json = ruta_json_equipo(lote, data["serial"])
+        _log_clon(f"JSON local: {ruta_json}")
+
+        destino = enviar_equipo_por_scp(cliente, lote, ruta_json)
+        _log_clon(f"ENVIADO -> {destino}")
+        _avisar_ok_clonacion(data, lote)
+        return 0
+    except Exception as e:
+        _log_clon(f"ERROR inesperado: {e}")
+        _avisar_error_clonacion("Falló el envío", str(e))
+        return 5
+    finally:
+        try:
+            cliente.close()
+        except Exception:
+            pass
+
+
+def _avisar_error_clonacion(titulo, detalle):
+    """Error visible en pantalla: en el equipo clonado nadie mira la consola."""
+    if _SIN_UI:
+        return
+    try:
+        raiz = tk.Tk()
+        raiz.withdraw()
+        raiz.attributes("-topmost", True)
+        messagebox.showerror(f"❌ {titulo}", detalle)
+        raiz.destroy()
+    except Exception:
+        pass
+
+
+def _avisar_ok_clonacion(data, lote):
+    if _SIN_UI:
+        return
+    try:
+        raiz = tk.Tk()
+        raiz.withdraw()
+        raiz.attributes("-topmost", True)
+        messagebox.showinfo(
+            "✅ Equipo registrado",
+            f"{data.get('model')}\nS/N: {data.get('serial')}\n\n"
+            f"Enviado a {etiqueta_lote(lote)}.",
+        )
+        raiz.destroy()
+    except Exception:
+        pass
+
+
+# ============================================================================
+# 12. ENTRYPOINT
+# ============================================================================
+def _ocultar_consola():
+    """
+    El .exe se compila con console=True para que el post-script de FOG pueda
+    quedarse con la traza de --clonacion. En el uso diario esa consola negra
+    detrás del menú no aporta nada, así que se esconde apenas arranca la GUI.
+    """
+    try:
+        import ctypes
+
+        ventana_consola = ctypes.windll.kernel32.GetConsoleWindow()
+        if ventana_consola:
+            ctypes.windll.user32.ShowWindow(ventana_consola, 0)  # SW_HIDE
+    except Exception:
+        pass
+
+
 def iniciar_interfaz_principal():
+    _ocultar_consola()
     ventana = tk.Tk()
     ventana.title("Asistente de Entrega — Arrienda.cl")
     ventana.resizable(False, False)
@@ -4950,5 +5928,56 @@ def iniciar_interfaz_principal():
     ventana.mainloop()
 
 
-if __name__ == "__main__":
+def main(argv=None):
+    """
+    Punto de entrada. Sin argumentos abre el menú de siempre; con --clonacion
+    corre el flujo automático del equipo recién clonado.
+    """
+    argv = list(sys.argv[1:] if argv is None else argv)
+
+    # El .bat redirige la salida a un log con la codificación de la consola
+    # (cp1252/cp850). Sin esto, un acento que no entre revienta el print, el
+    # except de modo_clonacion lo convierte en "error inesperado" y se pierde
+    # el registro de un equipo ya clonado por un problema de tipografía.
+    for flujo in (sys.stdout, sys.stderr):
+        try:
+            flujo.reconfigure(errors="replace")
+        except Exception:
+            pass
+
+    if "--ayuda" in argv or "-h" in argv or "--help" in argv:
+        print(
+            "REPORTE3 — Sistema de Control de Inventario\n\n"
+            "  REPORTE3.exe                       menú normal\n"
+            "  REPORTE3.exe --clonacion           registro automático del equipo\n"
+            "  REPORTE3.exe --clonacion --espera 120\n"
+            "                                     segundos antes del envío\n"
+            "                                     automático (0 = sin límite)\n"
+            "  REPORTE3.exe --clonacion --sin-ui  sin ninguna ventana: en un cmd\n"
+            "                                     pide las observaciones por\n"
+            "                                     consola antes de enviar; sin\n"
+            "                                     consola manda directo. Respeta\n"
+            "                                     --espera y Ctrl+C cancela.\n\n"
+            "Códigos de salida en modo clonación:\n"
+            "  0 enviado   1 cancelado   2 sin conexión\n"
+            "  3 sin OT activa   4 falló el escaneo   5 error inesperado\n"
+        )
+        return 0
+
+    if "--clonacion" in argv:
+        espera = _ESPERA_CLONACION
+        if "--espera" in argv:
+            try:
+                espera = int(argv[argv.index("--espera") + 1])
+            except (IndexError, ValueError):
+                _log_clon(
+                    f"--espera inválido, se usa el valor por defecto ({espera}s)"
+                )
+        return modo_clonacion(espera, sin_ui="--sin-ui" in argv)
+
     iniciar_interfaz_principal()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

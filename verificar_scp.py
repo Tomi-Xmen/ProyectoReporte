@@ -14,12 +14,43 @@ Revisa en orden lo que suele fallar al preparar el servidor:
     python verificar_scp.py
 """
 
+import importlib.util
 import os
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import REPORTE3 as R  # noqa: E402
+
+def _cargar_reporte3():
+    """
+    Carga REPORTE3.py por ruta explícita.
+
+    No alcanza con 'import REPORTE3': el build onedir deja una CARPETA llamada
+    REPORTE3 en dist\\, y si este script corre desde ahí Python la toma como
+    paquete namespace —sin ninguna constante adentro— y todo falla con un
+    AttributeError que no dice nada. Buscando el .py se elige siempre el
+    archivo correcto, se corra desde donde se corra.
+    """
+    aqui = os.path.dirname(os.path.abspath(__file__))
+    candidatos = [
+        os.path.join(aqui, "REPORTE3.py"),
+        os.path.join(os.getcwd(), "REPORTE3.py"),
+        os.path.join(os.path.dirname(aqui), "REPORTE3.py"),
+    ]
+    for ruta in candidatos:
+        if os.path.isfile(ruta):
+            spec = importlib.util.spec_from_file_location("REPORTE3", ruta)
+            modulo = importlib.util.module_from_spec(spec)
+            sys.modules["REPORTE3"] = modulo
+            spec.loader.exec_module(modulo)
+            return modulo, ruta
+    print("No se encontró REPORTE3.py. Se buscó en:")
+    for ruta in candidatos:
+        print(f"  • {ruta}")
+    print("\nCorré este script desde la carpeta del proyecto (donde está el .py).")
+    sys.exit(1)
+
+
+R, _RUTA_R = _cargar_reporte3()
 
 ok = "  ✓ "
 mal = "  ✗ "
@@ -27,6 +58,7 @@ mal = "  ✗ "
 
 def main():
     print("\n=== Configuración en REPORTE3.py ===")
+    print(f"  Leído de : {_RUTA_R}")
     print(f"  Servidor : {R.SCP_USUARIO}@{R.SCP_HOST}:{R.SCP_PUERTO}")
     print(f"  Clave    : {R.SCP_CLAVE or '(claves del agente/~/.ssh)'}")
     print(f"  Destino  : {R.SCP_DESTINO}")

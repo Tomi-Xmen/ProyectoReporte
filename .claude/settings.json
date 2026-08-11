@@ -13,7 +13,9 @@
       "Bash(PYTHONIOENCODING=utf-8 timeout 60 .venv/Scripts/python.exe -c ' *)",
       "Bash(PYTHONIOENCODING=utf-8 timeout 90 .venv/Scripts/python.exe verificar_scp.py)",
       "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -c ' *)",
-      "Bash(node run_filas.js)"
+      "Bash(node run_filas.js)",
+      "Bash(.venv/Scripts/python.exe -m py_compile REPORTE3.py)",
+      "Bash(PYTHONIOENCODING=utf-8 timeout 90 .venv/Scripts/python.exe REPORTE3.py --verificar)"
     ],
     "additionalDirectories": [
       "C:\\Users\\Tomas\\Desktop\\ProyectoReporte"

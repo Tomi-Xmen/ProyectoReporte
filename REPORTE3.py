@@ -121,7 +121,7 @@ SCP_PUERTO = 22                    # puerto SSH
 SCP_USUARIO = "Reporte"            # usuario SSH
 # Clave privada SSH. Si queda vacía se intenta con las claves del agente o de
 # ~/.ssh del usuario de Windows.
-SCP_CLAVE = r"C:\Users\Tomas\.ssh\id_clonado.pub"
+SCP_CLAVE = r"C:\Users\Tomas\.ssh\id_clonado"
 SCP_CLAVE_PASSPHRASE = ""          # vacío si la clave no tiene passphrase
 # Carpeta base REMOTA (ruta estilo Linux). Debajo se replica el árbol completo
 # <GRUPO>/<CLIENTE>/<OT-553>, igual que en local: así lo que se baja del
@@ -5882,6 +5882,99 @@ def modo_clonacion(espera=_ESPERA_CLONACION, sin_ui=False):
             pass
 
 
+def diagnostico_scp():
+    """
+    Chequeo completo del envío, corriendo DESDE ESTE equipo. Código 0 = todo OK.
+
+    Va dentro del ejecutable a propósito: el equipo que importa verificar es el
+    clonado, y ahí no hay Python ni código fuente, solo el .exe. Verificar desde
+    el servidor de FOG no sirve —FOG nunca habla con el NAS, solo copia archivos
+    al disco de Windows—, y verificar desde la PC de escritorio tampoco prueba
+    que el equipo clonado tenga la clave donde corresponde.
+    """
+    ok, mal = "  [OK]   ", "  [FALLA] "
+    print("\n=== Configuración ===")
+    print(f"  Ejecutable : {ruta_base_proyecto}")
+    print(f"  Servidor   : {SCP_USUARIO}@{SCP_HOST}:{SCP_PUERTO}")
+    print(f"  Destino    : {SCP_DESTINO}")
+
+    if not SCP_AVAILABLE:
+        print(f"\n{mal}Falta paramiko/scp en el ejecutable.")
+        print("       Recompilá con el .spec (trae los hiddenimports).")
+        return 1
+
+    print("\n=== 1. Clave privada ===")
+    ruta = resolver_clave_ssh()
+    for candidata in _candidatas_clave_ssh():
+        marca = "  <-- se usa esta" if candidata == ruta else ""
+        print(f"    {candidata}{marca}")
+    if not ruta:
+        print(f"{mal}No hay clave en ninguna de esas rutas.")
+        print("       En un equipo clonado la clave va JUNTO al .exe.")
+        return 1
+    print(f"{ok}Clave encontrada")
+
+    print("\n=== 2. Conexión ===")
+    try:
+        cliente = abrir_conexion_scp()
+    except Exception as e:
+        print(f"{mal}{e}")
+        return 1
+    print(f"{ok}Conectado y autenticado")
+
+    try:
+        print("\n=== 3. Permisos en el servidor ===")
+        codigo, salida, _ = _correr_remoto(cliente, "id")
+        if codigo != 0 or not salida:
+            print(f"{mal}El usuario no puede ejecutar comandos (¿shell nologin?)")
+            return 1
+        print(f"{ok}{salida}")
+        try:
+            verificar_destino_remoto(cliente)
+        except Exception as e:
+            print(f"{mal}{e}")
+            return 1
+        print(f"{ok}Carpeta de destino escribible")
+
+        print("\n=== 4. OT activa publicada ===")
+        lote = leer_lote_activo_remoto(cliente)
+        if lote:
+            print(f"{ok}{etiqueta_lote(lote)}")
+        else:
+            # No es un fallo del equipo: es que en la central todavía no
+            # publicaron la OT. Se distingue para no mandar a revisar la red.
+            print("  [AVISO] No hay OT publicada.")
+            print("       En la PC central: PANEL DE CLONACIÓN → Publicar OT activa.")
+
+        print("\n=== 5. Subida real de prueba ===")
+        local = os.path.join(tempfile.mkdtemp(), "prueba_scp.txt")
+        with open(local, "w", encoding="utf-8") as f:
+            f.write(f"prueba desde {socket.gethostname()}\n")
+        carpeta = _ruta_remota(SCP_DESTINO, "_prueba_scp")
+        remoto = _ruta_remota(carpeta, "prueba_scp.txt")
+        try:
+            _mkdir_remoto(cliente, carpeta)
+            with SCPClient(cliente.get_transport(), socket_timeout=SCP_TIMEOUT) as scp:
+                scp.put(local, remote_path=remoto)
+            codigo, salida, _ = _correr_remoto(cliente, f"cat '{remoto}'")
+            if codigo != 0 or socket.gethostname() not in salida:
+                print(f"{mal}El archivo no llegó o no se pudo leer de vuelta")
+                return 1
+            print(f"{ok}Archivo subido y leído de vuelta")
+        finally:
+            _correr_remoto(cliente, f"rm -rf '{carpeta}'")
+
+        print("\n" + "=" * 56)
+        print("  TODO LISTO — este equipo puede enviar.")
+        print("=" * 56 + "\n")
+        return 0
+    finally:
+        try:
+            cliente.close()
+        except Exception:
+            pass
+
+
 def _avisar_error_clonacion(titulo, detalle):
     """Error visible en pantalla: en el equipo clonado nadie mira la consola."""
     if _SIN_UI:
@@ -5979,6 +6072,7 @@ def main(argv=None):
         print(
             "REPORTE3 — Sistema de Control de Inventario\n\n"
             "  REPORTE3.exe                       menú normal\n"
+            "  REPORTE3.exe --verificar           chequea el envío desde ESTE equipo\n"
             "  REPORTE3.exe --clonacion           registro automático del equipo\n"
             "  REPORTE3.exe --clonacion --espera 120\n"
             "                                     segundos antes del envío\n"
@@ -5993,6 +6087,9 @@ def main(argv=None):
             "  3 sin OT activa   4 falló el escaneo   5 error inesperado\n"
         )
         return 0
+
+    if "--verificar" in argv:
+        return diagnostico_scp()
 
     if "--clonacion" in argv:
         espera = _ESPERA_CLONACION

@@ -9,7 +9,7 @@
 #  En el servidor de FOG, ${postdownpath} tiene que contener:
 #
 #      REPORTE3/            la carpeta COMPLETA de dist\ (exe + _internal)
-#      id_ed25519           la clave privada SSH  <-- SIN esto no puede enviar
+#      id_clonado           la clave privada SSH  <-- SIN esto no puede enviar
 #      fog_postscript.bat   el lanzador que corre en el primer login
 #
 #  El build es "onedir": REPORTE3.exe suelto NO arranca, necesita _internal
@@ -61,7 +61,7 @@ fi
 #    equipo se pierde sin que nadie se entere hasta el inventario.
 faltan=""
 [ -d "${postdownpath}/REPORTE3" ]        || faltan="$faltan REPORTE3/"
-[ -f "${postdownpath}/id_ed25519" ]      || faltan="$faltan id_ed25519"
+[ -f "${postdownpath}/id_clonado" ]      || faltan="$faltan id_clonado"
 [ -f "${postdownpath}/fog_postscript.bat" ] || faltan="$faltan fog_postscript.bat"
 if [ -n "$faltan" ]; then
     echo "ERROR: falta en ${postdownpath}:$faltan"
@@ -75,7 +75,7 @@ STARTUP="/ntfs/${STARTUP_REL}"
 mkdir -p "$DEST" "$STARTUP"
 
 cp -r "${postdownpath}/REPORTE3/." "$DEST"/
-cp "${postdownpath}/id_ed25519" "$DEST"/
+cp "${postdownpath}/id_clonado" "$DEST"/
 cp "${postdownpath}/fog_postscript.bat" "$STARTUP"/
 
 sync

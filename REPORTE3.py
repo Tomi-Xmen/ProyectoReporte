@@ -1,4 +1,4 @@
-"""
+
 Sistema de Control de Inventario — Arrienda.cl
 ==============================================
 
@@ -595,10 +595,7 @@ function filasValida(d){
 
   /* El transformador va sin nombre: en Valida se carga como accesorio y con la
      descripción alcanza. */
-  if(d.transf) filas.push(["", "TRANSFORMADOR", d.transf, ""]);
-
-  return filas;
-}
+  if(d.transf) filas.push(["", "TRANSFORMADOR ORIGINAL HP", d.transf, ""]); }
 
 function copiarFilas(){
   let txt="";
@@ -6071,8 +6068,7 @@ def main(argv=None):
     if "--ayuda" in argv or "-h" in argv or "--help" in argv:
         print(
             "REPORTE3 — Sistema de Control de Inventario\n\n"
-            "  REPORTE3.exe                       menú normal\n"
-            "  REPORTE3.exe --verificar           chequea el envío desde ESTE equipo\n"
+            "  REPORTE3.exe                       menú normal\n" "  REPORTE3.exe --verificar           chequea el envío desde ESTE equipo\n"
             "  REPORTE3.exe --clonacion           registro automático del equipo\n"
             "  REPORTE3.exe --clonacion --espera 120\n"
             "                                     segundos antes del envío\n"

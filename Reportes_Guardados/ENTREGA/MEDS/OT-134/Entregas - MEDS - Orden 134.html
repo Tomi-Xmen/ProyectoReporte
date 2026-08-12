@@ -165,35 +165,68 @@ function extraerDatos(eq){
   return {model,serial,cpu,obs,office,guia,mov,discos,specs,equipoFull:model+" "+cpu, fallas, Manufacturer, Partnumber, ot, transf};
 }
 
+/* --- EXPORT A VALIDA: COPIAR FILAS Y CSV --- */
+
+const MSG_COPIADO="✅ ¡Filas copiadas!\n\nPega directamente en tu Excel / Valida.";
+
+/* Filas que un equipo aporta a Valida, como [nombre, descripción, serie, obs].
+   Fuente ÚNICA de copiarFilas y exportarValidaCSV: las dos salidas describen el
+   mismo equipo y tienen que decir lo mismo. Cuando cada una armaba sus filas por
+   su cuenta terminaron divergiendo (la fila del transformador salía distinta en
+   cada export). Accesorio nuevo = una línea acá y aparece en las dos. */
+function filasValida(d){
+  let filas=[[d.equipoFull, d.specs, d.serial, d.obs]];
+
+  d.discos.forEach(dk=>{
+    let lbl=dk.desc.toUpperCase().includes("HDD")?"HDD":"SSD";
+    filas.push([lbl, dk.desc, dk.serial, ""]);
+  });
+
+  /* Sin 'Key:' no hay nada que cargar: la fila de Office existe en el HTML
+     aunque SN_APP esté PENDIENTE (ver construir_entry_html), y exportarla daría
+     una fila con la serie en blanco. */
+  if(d.office && d.office.includes('Key:')){
+    let ver=(d.office.match(/Office\s+([A-Za-z0-9]+)/)||[])[1]||"2016";
+    let key=(d.office.match(/Key:\s*([^)]+)/)||[])[1]||"";
+    filas.push([`OFFICE ${ver}`, "HOME AND BUSINESS", key.trim(), ""]);
+  }
+
+  /* El transformador va sin nombre: en Valida se carga como accesorio y con la
+     descripción alcanza. */
+  if(d.transf) filas.push(["", "TRANSFORMADOR ORIGINAL HP", d.transf, ""]); }
+
 function copiarFilas(){
   let txt="";
   document.querySelectorAll('details').forEach(eq=>{
-    let d=extraerDatos(eq);
-    txt+=`${d.equipoFull}\t${d.specs}\t${d.serial}\n`;
-    d.discos.forEach(dk=>{
-      let lbl=dk.desc.toUpperCase().includes("HDD")?"HDD":"SSD";
-      txt+=`${lbl}\t${dk.desc}\t${dk.serial}\n`;
-    });
-    if(d.transf) txt+=`TRANSFORMADOR\tTRANSFORMADOR ${d.model}\t${d.transf}\n`;
-    if(d.office){
-      let ver=(d.office.match(/Office\s+([A-Za-z0-9]+)/)||[])[1]||"2016";
-      let key=(d.office.match(/Key:\s*([^)]+)/)||[])[1]||"";
-      txt+=`OFFICE ${ver}\tHOME AND BUSINESS\t${key.trim()}\n`;
-    }
+    /* Al portapapeles van solo las 3 primeras columnas: la obs ya viaja dentro
+       de specs y la cuarta es para el CSV. */
+    filasValida(extraerDatos(eq)).forEach(f=>{ txt+=f.slice(0,3).join("\t")+"\n" });
   });
 
-  if (navigator.clipboard && window.isSecureContext) {
-      navigator.clipboard.writeText(txt).then(() => {
-          alert("✅ ¡Filas copiadas!\n\nPega directamente en tu Excel / Valida.");
-      }).catch(err => {
-          alert("Error al copiar al portapapeles.");
-      });
+  if(!txt){ alert("No hay equipos en el reporte para copiar."); return; }
+
+  if(navigator.clipboard && window.isSecureContext){
+      navigator.clipboard.writeText(txt)
+        .then(()=>alert(MSG_COPIADO))
+        .catch(()=>copiarConTextarea(txt));
   } else {
-      let ta=document.createElement("textarea");ta.value=txt;document.body.appendChild(ta);ta.select();
-      try{document.execCommand('copy');alert("✅ ¡Filas copiadas!\n\nPega directamente en tu Excel / Valida.");}
-      catch(e){alert("Error al copiar.")}
-      document.body.removeChild(ta);
+      copiarConTextarea(txt);
   }
+}
+
+/* Respaldo del portapapeles. Se usa en dos casos: el reporte abierto con
+   file://, donde navigator.clipboard no existe, y el rebote de la API cuando la
+   ventana perdió el foco —de ahí que el catch caiga acá y no en un alert de
+   error. */
+function copiarConTextarea(txt){
+  let ta=document.createElement("textarea");
+  ta.value=txt;
+  ta.style.cssText="position:fixed;left:-9999px;top:0";  /* que select() no salte el scroll */
+  document.body.appendChild(ta);
+  ta.select();
+  try{ document.execCommand('copy'); alert(MSG_COPIADO); }
+  catch(e){ alert("Error al copiar al portapapeles.") }
+  document.body.removeChild(ta);
 }
 
 /* Nombre base compartido por las descargas: Reporte_<tipo>_<cliente>_<AAAAMMDD> */
@@ -215,17 +248,11 @@ function exportarValidaCSV(){
   let csv="\uFEFFTIPO;GUIA;NOMBRE DEL EQUIPO;DESCRIPCION;NUMERO DE SERIE;OBSERVACIONES\n";
   document.querySelectorAll('details').forEach(eq=>{
     let d=extraerDatos(eq);
-    csv+=`"${d.mov}";"${d.guia}";"${d.equipoFull}";"${d.specs}";"${d.serial}";"${d.obs}"\n`;
-    d.discos.forEach(dk=>{
-      let lbl=dk.desc.toUpperCase().includes("HDD")?"HDD":"SSD";
-      csv+=`"${d.mov}";"${d.guia}";"${lbl}";"${dk.desc}";"${dk.serial}";""\n`;
+    /* Movimiento y gu\u00EDa son del equipo, no de la fila: se repiten en todas las
+       filas que aporta, que es como Valida espera el CSV. */
+    filasValida(d).forEach(f=>{
+      csv+=`"${d.mov}";"${d.guia}";"${f[0]}";"${f[1]}";"${f[2]}";"${f[3]}"\n`;
     });
-    if(d.transf) csv+=`"${d.mov}";"${d.guia}";"TRANSFORMADOR";"TRANSFORMADOR ${d.model}";"${d.transf}";""\n`;
-    if(d.office){
-      let ver=(d.office.match(/Office\s+([A-Za-z0-9]+)/)||[])[1]||"2016";
-      let key=(d.office.match(/Key:\s*([^)]+)/)||[])[1]||"";
-      csv+=`"${d.mov}";"${d.guia}";"OFFICE ${ver}";"HOME AND BUSINESS";"${key.trim()}";""\n`;
-    }
   });
   descargarArchivo(nombreBaseReporte()+".csv", csv, 'text/csv;charset=utf-8;');
 }

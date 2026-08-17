@@ -1,4 +1,4 @@
-
+"""
 Sistema de Control de Inventario — Arrienda.cl
 ==============================================
 
@@ -10,23 +10,28 @@ registrar entregas/retiros y generar reportes HTML, JSON y Word.
   1. CONFIGURACIÓN            — rutas y constantes globales.
   2. TEMA Y HELPERS DE UI      — paleta (COLORS), fuentes y widgets reutilizables
                                  de Tkinter (titulo_ui, ventana_modal, boton_menu,
-                                 boton_accion, fila_selector, treeview_auditoria).
+                                 boton_accion, marco_scrolleable, treeview_auditoria).
   3. SCANNER (PowerShell)      — PS_SCRIPT: script embebido que lee el hardware.
   4. PLANTILLA HTML DEL REPORTE — HTML_START / HTML_END (CSS + JS del reporte).
-  5. EXPORT WORD               — helpers docx + generar_informe_word.
+  5. EXPORT WORD               — helpers docx + generar_informe_word (informe de
+                                 fallas; lo dispara cerrar_lote, ver sección 7).
   6. SCANNER (ejecución)       — get_inventory_fast: corre PS_SCRIPT y parsea.
   7. PERSISTENCIA              — modelo de LOTES por OT/guía, construir_entry_html,
                                  guardar_equipo_general, cerrar_lote, crear_backup,
                                  envío al servidor por SCP.
   8. RECONSTRUCCIÓN / MERGE    — rearmar HTML desde los JSON guardados.
-  9. MÓDULOS (Toplevel)        — auditorías, comparación Excel, etiquetas, nombre.
+  9. MÓDULOS (Toplevel)        — etiquetas manuales, transformadores, panel de
+                                 clonación y cambio de nombre del equipo.
  10. UI PRINCIPAL              — menú, pantalla de escaneo y formulario.
- 11. ENTRYPOINT               — iniciar_interfaz_principal / __main__.
+ 11. MODO CLONACIÓN            — flujo headless --clonacion para el post-script
+                                 de FOG (sin menú ni elección de OT).
+ 12. ENTRYPOINT                — iniciar_interfaz_principal / __main__.
 
 DISPOSICIÓN EN DISCO (todo cuelga de ./Reportes_Guardados):
 
     ENTREGA/<CLIENTE>/OT-553/      equipos, HTML y FUSIONADO de esa OT
-    RETIROS/<CLIENTE>/GUIA-8891/   ídem para retiros (+ informe Word si hay fallas)
+    RETIROS/<CLIENTE>/GUIA-8891/   ídem para retiros (+ informe Word de fallas,
+                                   que se escribe recién al CERRAR la OT)
     _BACKUPS/Backup_<fecha>_<hora>_<motivo>.zip
     .lote_activo.json              puntero al lote que recibe lo escaneado
 
@@ -46,7 +51,6 @@ construir_entry_html; no se debe alterar sin querer cambiar el reporte.
 
 import html  # Para escapar strings en el HTML
 import json
-from logging import root
 import os
 import re
 import socket
@@ -59,6 +63,7 @@ import time
 import zipfile
 import tkinter as tk
 from datetime import datetime
+from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 # --- SOLUCIÓN PYINSTALLER: Asegurar que el directorio de trabajo sea siempre el correcto ---
@@ -72,14 +77,6 @@ else:
 # Cambiamos el directorio de trabajo a la carpeta real del .exe
 os.chdir(ruta_base_proyecto)
 # -------------------------------------------------------------------------------------------
-
-# Importar librería para pandas
-try:
-    import pandas as pd
-
-    PANDAS_AVAILABLE = True
-except ImportError:
-    PANDAS_AVAILABLE = False
 
 # Importar librerías para el envío por SCP (SSH). Si faltan, el botón de envío
 # avisa en vez de reventar: el resto de la app (escaneo, reportes) no depende
@@ -98,7 +95,7 @@ try:
     from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
-    from docx.shared import Cm, Inches, Pt, RGBColor
+    from docx.shared import Cm, Pt, RGBColor
 
     DOCX_AVAILABLE = True
 except ImportError:
@@ -153,7 +150,7 @@ COLORS = {
     "verde_esmeralda": "#059669",
     "naranja": "#d97706",        # advertencia / enviar red
     "morado": "#7c3aed",         # reconstruir
-    "celeste": "#0ea5e9",        # comparar excel
+    "celeste": "#0ea5e9",        # manejo de la OT (nueva / cambiar / refrescar)
     "pizarra": "#475569",        # etiquetas
     "gris": "#64748b",           # texto secundario
     "gris_oscuro": "#334155",
@@ -255,28 +252,17 @@ def boton_accion(parent, texto, comando, color=None, padx=18, pady=7):
     )
 
 
-# Estilo compartido de los botones "elegir ruta/carpeta" de los módulos.
-def _estilo_btn_ruta():
-    return dict(
-        bg=COLORS["azul"], fg="white", font=fuente(9), cursor="hand2", relief="flat"
-    )
-
-
-def fila_selector(frame, fila, texto_btn, comando, var):
-    """Fila 'botón elegir ruta + entry de solo lectura' usada por las auditorías."""
-    tk.Button(frame, text=texto_btn, command=comando, **_estilo_btn_ruta()).grid(
-        row=fila, column=0, padx=5, pady=3, sticky="ew"
-    )
-    tk.Entry(
-        frame, textvariable=var, width=55, state="readonly", font=fuente(9)
-    ).grid(row=fila, column=1, padx=5)
-
-
-def treeview_auditoria(win, cols_spec, height, con_alterado=False):
+def treeview_auditoria(win, cols_spec, height):
     """
-    Crea el Treeview estándar de auditoría (estilo + columnas + tags de color +
-    scrollbar dentro de su frame) y lo devuelve listo para insertar filas.
-    cols_spec: lista de (col_id, ancho, encabezado).
+    Tabla estándar de resultados (estilo + columnas + tags de color + scrollbar
+    dentro de su frame), lista para insertar filas.
+
+    cols_spec: lista de (col_id, ancho, encabezado). Las columnas 'estado' y
+    'serial' se centran; el resto va alineado a la izquierda.
+
+    Tags de color disponibles al insertar: 'ok' (verde), 'falta' (rojo) y
+    'sobra' (ámbar). Hoy su único consumidor es el panel de clonación; el
+    nombre viene de los módulos de auditoría que ya no existen.
     """
     style = ttk.Style()
     style.configure("Audit.Treeview", rowheight=24, font=fuente(9))
@@ -295,13 +281,6 @@ def treeview_auditoria(win, cols_spec, height, con_alterado=False):
     tree.tag_configure("ok", foreground="#16a34a")
     tree.tag_configure("falta", foreground="#dc2626", background="#fee2e2")
     tree.tag_configure("sobra", foreground="#d97706", background="#fef3c7")
-    if con_alterado:
-        tree.tag_configure(
-            "alterado",
-            foreground="#b91c1c",
-            background="#fecaca",
-            font=fuente(9, True),
-        )
 
     sb = ttk.Scrollbar(win, orient="vertical", command=tree.yview)
     tree.configure(yscrollcommand=sb.set)
@@ -595,7 +574,10 @@ function filasValida(d){
 
   /* El transformador va sin nombre: en Valida se carga como accesorio y con la
      descripción alcanza. */
-  if(d.transf) filas.push(["", "TRANSFORMADOR ORIGINAL HP", d.transf, ""]); }
+  if(d.transf) filas.push(["", "TRANSFORMADOR C/ADAPTADOR", d.transf, ""]);
+
+  return filas;
+}
 
 function copiarFilas(){
   let txt="";
@@ -852,6 +834,22 @@ HTML_END = "\n</div></div></body></html>"
 # ----------------------------------------------------------------------------
 # Helpers de formato docx + generar_informe_word: informe técnico de equipos
 # defectuosos. Requiere python-docx (DOCX_AVAILABLE).
+#
+# CUÁNDO SE CREA EL INFORME: nadie llama acá al escanear ni al guardar un
+# equipo. El informe nace en un solo punto del flujo normal —cerrar_lote()—
+# y solo si se cumplen las TRES condiciones a la vez:
+#   1) la OT es de RETIRO  (una Entrega nunca genera informe; de hecho el panel
+#      de "Revisión de Componentes" del formulario está oculto en las entregas),
+#   2) al menos un equipo quedó con TIENE_FALLAS=True, o sea con algún
+#      componente marcado OBS o MALO, y
+#   3) la OT se cierra de verdad (botón CERRAR OT).
+# Si falta cualquiera de las tres no hay .docx y tampoco hay error: es el
+# comportamiento esperado.
+#
+# La otra vía es _reconstruir_carpeta_suelta() (sección 8), que sí lo regenera
+# al rearmar una carpeta bajada del servidor. OJO con la asimetría: regenerar
+# una OT canónica con "RECONSTRUIR DESDE JSONs" rehace el HTML y el FUSIONADO
+# pero NO vuelve a escribir el Word.
 # ============================================================================
 def _set_paragraph_spacing(paragraph, space_before=0, space_after=0, line_spacing=None):
     pPr = paragraph._p.get_or_add_pPr()
@@ -905,20 +903,6 @@ def _add_titulo_seccion(
     run.font.size = Pt(font_size)
     run.font.name = "Arial"
     run.font.color.rgb = RGBColor(*MARCA_RGB)
-    return p
-
-
-def _add_falla_item(doc, texto, font_size=11):
-    p = doc.add_paragraph()
-    _set_paragraph_spacing(p, space_before=0, space_after=1)
-    pPr = p._p.get_or_add_pPr()
-    ind = OxmlElement("w:ind")
-    ind.set(qn("w:left"), "360")
-    ind.set(qn("w:hanging"), "360")
-    pPr.append(ind)
-    run = p.add_run(f"- {texto.upper()}")
-    run.font.size = Pt(font_size)
-    run.font.name = "Arial"
     return p
 
 
@@ -1017,7 +1001,7 @@ def generar_informe_word(cliente, equipos_malos, ruta_cliente, id_lote=""):
 
         _add_titulo_seccion(doc, "CONCLUSIÓN:", space_before=15, space_after=4)
         p_conclu = doc.add_paragraph()
-        run_c = p_conclu.add_run(
+        p_conclu.add_run(
             "Los equipos listados en la tabla superior presentan fallas físicas o de hardware. "
             "Se requiere revisión detallada, cambio de componentes afectados o envío a bodega "
             "a la espera de repuestos o reparación."
@@ -1657,6 +1641,10 @@ def regenerar_lote(lote):
     Al ser derivados y no incrementales, el fusionado siempre sale completo
     (aunque la OT se haya trabajado en varios días) y sin duplicados.
     Devuelve el total de equipos.
+
+    NO toca el informe Word de fallas: ese lo escribe cerrar_lote() y solo al
+    cerrar. Correr esto sobre una OT de retiro con equipos malos deja el .docx
+    como estaba (ver sección 5).
     """
     equipos = leer_equipos_lote(lote)
     cfg = _MOV_CFG[lote["mov"]]
@@ -2007,6 +1995,13 @@ def cerrar_lote(lote):
     Finaliza una OT/guía: regenera el fusionado con TODO lo escaneado (aunque
     se haya trabajado en varios días), emite el informe Word si hay equipos con
     fallas y escribe el marcador '.cerrado'.
+
+    Este es el ÚNICO punto del flujo normal que produce el .docx, y solo para
+    los RETIROS: en una entrega equipos_malos queda vacío a propósito, porque
+    el formulario ni siquiera muestra el panel de componentes. Cerrar dos veces
+    (reabrir, sumar equipos y volver a cerrar) no pisa el informe anterior:
+    _ruta_no_pisar le agrega ' (2)', así que el archivo con el nombre original
+    conserva los datos del primer cierre.
 
     No mueve ni renombra nada: los equipos viven en la carpeta de la OT desde
     el primer escaneo. Devuelve (total_equipos, equipos_malos).
@@ -3296,6 +3291,10 @@ def _reconstruir_carpeta_suelta(carpeta):
     HTML_START/HTML_END (copiar filas, CSV, fusionado, etiquetas), cada equipo
     con su data-comps y data-fusion, y un <title> con el cliente real para que
     las descargas salgan con el nombre correcto.
+
+    A diferencia de regenerar_lote(), acá SÍ se escribe el informe Word cuando
+    el grupo es de retiros y hay equipos con fallas: la carpeta suelta no pasó
+    nunca por cerrar_lote(), así que el .docx no existe y hay que producirlo.
     """
     equipos_por_tipo = {"Entregas": [], "Retiros": []}
     errores = []
@@ -3397,6 +3396,9 @@ def accion_unir_Json(ventana):
     Si la carpeta pertenece al árbol de reportes se regenera el lote CANÓNICO
     (mismo HTML y mismo FUSIONADO que produce el escaneo, sin archivos sueltos);
     si es una carpeta cualquiera, se escribe un '_RECONSTRUIDO.html' aparte.
+
+    Las dos ramas difieren en el informe Word: la de carpeta suelta lo genera,
+    la canónica no (el .docx de una OT es cosa de cerrar_lote, sección 5).
     """
     carpeta = filedialog.askdirectory(
         title="Selecciona la carpeta a reconstruir (OT, cliente o grupo)",
@@ -3470,825 +3472,9 @@ def accion_unir_Json(ventana):
 
 
 # ============================================================================
-# 9. MÓDULOS (ventanas Toplevel) — auditorías, comparación Excel, etiquetas,
-#    cambio de nombre del equipo.
+# 9. MÓDULOS (ventanas Toplevel) — etiquetas manuales, transformadores,
+#    panel de clonación y cambio de nombre del equipo.
 # ============================================================================
-def abrir_modulo_auditoria(ventana_padre):
-    win = ventana_modal(ventana_padre, "Auditoría — Entregas vs Retiros", "860x520")
-    titulo_ui(win, "🔍 Auditoría Diferencial (Entregas vs Retiros)")
-
-    frame_rutas = tk.Frame(win, bg=COLORS["fondo"])
-    frame_rutas.pack(fill="x", padx=20, pady=4)
-    ruta_entrega = tk.StringVar()
-    ruta_retiro = tk.StringVar()
-
-    def sel_carpeta(var, titulo):
-        c = filedialog.askdirectory(title=titulo, parent=win)
-        if c:
-            var.set(c)
-
-    fila_selector(
-        frame_rutas,
-        0,
-        "📂 Carpeta Entregas",
-        lambda: sel_carpeta(ruta_entrega, "Carpeta de ENTREGAS"),
-        ruta_entrega,
-    )
-    fila_selector(
-        frame_rutas,
-        1,
-        "📂 Carpeta Retiros",
-        lambda: sel_carpeta(ruta_retiro, "Carpeta de RETIROS"),
-        ruta_retiro,
-    )
-
-    tree = treeview_auditoria(
-        win,
-        [
-            ("estado", 105, "ESTADO"),
-            ("serial", 130, "S/N"),
-            ("modelo", 190, "MODELO"),
-            ("detalle", 400, "DETALLE"),
-        ],
-        height=13,
-        con_alterado=True,
-    )
-
-    def cargar_jsons(ruta):
-        datos = {}
-        for arch in os.listdir(ruta):
-            if arch.endswith(".json"):
-                try:
-                    with open(os.path.join(ruta, arch), "r", encoding="utf-8") as f:
-                        j = json.load(f)
-                    if "SERIAL" in j:
-                        datos[j["SERIAL"]] = j
-                except Exception:
-                    pass
-        return datos
-
-    def ejecutar():
-        tree.delete(*tree.get_children())
-        if not ruta_entrega.get() or not ruta_retiro.get():
-            return messagebox.showwarning(
-                "Faltan Datos", "Selecciona ambas carpetas.", parent=win
-            )
-        entregas = cargar_jsons(ruta_entrega.get())
-        retiros = cargar_jsons(ruta_retiro.get())
-        if not entregas:
-            return messagebox.showerror(
-                "Error", "Carpeta de Entregas sin JSONs válidos.", parent=win
-            )
-        if not retiros:
-            return messagebox.showerror(
-                "Error", "Carpeta de Retiros sin JSONs válidos.", parent=win
-            )
-
-        for serial, d_e in entregas.items():
-            modelo = d_e.get("MODELO", "Desconocido")
-            if serial not in retiros:
-                tree.insert(
-                    "",
-                    tk.END,
-                    values=(
-                        "❌ FALTANTE",
-                        serial,
-                        modelo,
-                        "Equipo de entrega no está en retiro.",
-                    ),
-                    tags=("falta",),
-                )
-                continue
-            d_r = retiros[serial]
-            alertas = []
-            if len(d_e["DATA"].get("ram_raw", [])) != len(
-                d_r["DATA"].get("ram_raw", [])
-            ):
-                alertas.append(f"RAM alterada.")
-            s_e = {
-                d.get("serial", "NA")
-                for d in d_e["DATA"].get("disks_data", [])
-                if isinstance(d, dict)
-            }
-            s_r = {
-                d.get("serial", "NA")
-                for d in d_r["DATA"].get("disks_data", [])
-                if isinstance(d, dict)
-            }
-            if s_e != s_r:
-                alertas.append("DISCO serial distinto.")
-            tag = "alterado" if alertas else "ok"
-            tree.insert(
-                "",
-                tk.END,
-                values=(
-                    "⚠️ ALTERADO" if alertas else "✅ OK",
-                    serial,
-                    modelo,
-                    " | ".join(alertas) if alertas else "Hardware coincide.",
-                ),
-                tags=(tag,),
-            )
-        for serial, d_r in retiros.items():
-            if serial not in entregas:
-                tree.insert(
-                    "",
-                    tk.END,
-                    values=(
-                        "❓ SOBRANTE",
-                        serial,
-                        d_r.get("MODELO", "Desconocido"),
-                        "Equipo en retiro no figura en entregas.",
-                    ),
-                    tags=("sobra",),
-                )
-
-    boton_accion(win, "⚙️  INICIAR AUDITORÍA", ejecutar).pack(pady=10)
-
-
-def abrir_modulo_auditoria_mixta(ventana_padre):
-    win = ventana_modal(ventana_padre, "Auditoría — Sistema vs Físico", "900x550")
-    titulo_ui(win, "📊 Auditoría Cruzada (Teórico vs Físico)")
-
-    frame_rutas = tk.Frame(win, bg=COLORS["fondo"])
-    frame_rutas.pack(fill="x", padx=20, pady=4)
-    ruta_base = tk.StringVar()
-    ruta_fisico = tk.StringVar()
-
-    def sel_archivo(var, titulo, tipos):
-        arch = filedialog.askopenfilename(title=titulo, parent=win, filetypes=tipos)
-        if arch:
-            var.set(arch)
-
-    fila_selector(
-        frame_rutas,
-        0,
-        "📂 Cargar Excel Base",
-        lambda: sel_archivo(
-            ruta_base, "Seleccionar Excel Base", [("Archivos Excel", "*.xlsx *.xls")]
-        ),
-        ruta_base,
-    )
-    fila_selector(
-        frame_rutas,
-        1,
-        "📂 Cargar Físico",
-        lambda: sel_archivo(
-            ruta_fisico,
-            "Seleccionar Reporte Físico",
-            [("HTML o Excel", "*.html *.xlsx *.xls")],
-        ),
-        ruta_fisico,
-    )
-
-    tree = treeview_auditoria(
-        win,
-        [
-            ("estado", 110, "ESTADO"),
-            ("serial", 150, "N° SERIE"),
-            ("modelo", 250, "MODELO / INFO"),
-            ("origen", 280, "DETALLE"),
-        ],
-        height=12,
-        con_alterado=False,
-    )
-
-    def extraer_excel(ruta):
-        equipos = {}
-        try:
-            df = pd.read_excel(ruta)
-            df.columns = df.columns.str.strip().str.upper()
-            col_serie = None
-            for col in df.columns:
-                if col in [
-                    "NUMERO DE SERIE",
-                    "NÚMERO DE SERIE",
-                    "SERIAL",
-                    "S/N",
-                    "SN",
-                    "SERIE",
-                ]:
-                    col_serie = col
-                    break
-            if not col_serie:
-                for col in df.columns:
-                    if "SERIE" in str(col) and "DISCO" not in str(col):
-                        col_serie = col
-                        break
-            if col_serie:
-                col_modelo = next(
-                    (c for c in df.columns if "MODEL" in str(c) or "EQUIPO" in str(c)),
-                    None,
-                )
-                for _, row in df.iterrows():
-                    sn = str(row[col_serie]).strip()
-                    if sn and sn.lower() != "nan":
-                        equipos[sn.upper()] = (
-                            str(row[col_modelo]).strip() if col_modelo else "Excel"
-                        )
-        except Exception as e:
-            messagebox.showerror(
-                "Error Excel", f"No se pudo leer {ruta}\n{e}", parent=win
-            )
-        return equipos
-
-    def extraer_html(ruta):
-        equipos = {}
-        try:
-            with open(ruta, "r", encoding="utf-8") as f:
-                content = f.read()
-            bloques = re.findall(r"<details.*?</details>", content, flags=re.DOTALL)
-            for bloque in bloques:
-                s_match = re.search(
-                    r'<tr><th>Número de Serie</th><td class="serial-tag">(.*?)</td></tr>',
-                    bloque,
-                )
-                m_match = re.search(r'<span class="model-name">(.*?)</span>', bloque)
-                if s_match:
-                    equipos[s_match.group(1).strip().upper()] = (
-                        m_match.group(1).strip() if m_match else "HTML"
-                    )
-        except Exception as e:
-            messagebox.showerror(
-                "Error HTML", f"No se pudo leer {ruta}\n{e}", parent=win
-            )
-        return equipos
-
-    def ejecutar():
-        tree.delete(*tree.get_children())
-        r_base, r_fis = ruta_base.get(), ruta_fisico.get()
-        if not r_base or not r_fis:
-            return messagebox.showwarning(
-                "Faltan Datos", "Selecciona ambos archivos.", parent=win
-            )
-        dict_base = extraer_excel(r_base)
-        if not dict_base:
-            return
-        dict_fis = (
-            extraer_html(r_fis) if r_fis.endswith(".html") else extraer_excel(r_fis)
-        )
-        if not dict_fis:
-            return
-
-        for sn, mod in dict_base.items():
-            if sn in dict_fis:
-                tree.insert(
-                    "",
-                    tk.END,
-                    values=("✅ MATCH", sn, mod, "Encontrado en ambos."),
-                    tags=("ok",),
-                )
-            else:
-                tree.insert(
-                    "",
-                    tk.END,
-                    values=(
-                        "❌ FALTANTE",
-                        sn,
-                        mod,
-                        "Está en la Base, pero NO en el Físico.",
-                    ),
-                    tags=("falta",),
-                )
-        for sn, mod in dict_fis.items():
-            if sn not in dict_base:
-                tree.insert(
-                    "",
-                    tk.END,
-                    values=(
-                        "❓ SOBRANTE",
-                        sn,
-                        mod,
-                        "Físico no figura en el Excel Base.",
-                    ),
-                    tags=("sobra",),
-                )
-
-    boton_accion(win, "⚙️  CRUZAR INVENTARIOS", ejecutar).pack(pady=10)
-
-
-def abrir_modulo_comparacion_excel(ventana_padre):
-    if not PANDAS_AVAILABLE:
-        messagebox.showerror(
-            "Falta Librería",
-            "Este módulo requiere 'pandas' y 'openpyxl'.\n\n"
-            "Instálalos con:\n  pip install pandas openpyxl",
-            parent=ventana_padre,
-        )
-        return
-
-    win = ventana_modal(
-        ventana_padre, "Comparación Excel — Entregas vs Retiros", "1020x640"
-    )
-    titulo_ui(win, "📊 Comparación de Excel: Entregas vs Retiros", pady=(14, 4))
-    tk.Label(
-        win,
-        text="Detecta equipos faltantes, sobrantes y diferencias de hardware entre ambos reportes.",
-        font=("Segoe UI", 9),
-        bg=COLORS["fondo"],
-        fg=COLORS["gris"],
-    ).pack(pady=(0, 10))
-
-    frame_rutas = tk.Frame(win, bg=COLORS["fondo"])
-    frame_rutas.pack(fill="x", padx=24, pady=4)
-
-    ruta_entrega = tk.StringVar()
-    ruta_retiro = tk.StringVar()
-
-    style_btn = dict(
-        bg="#1a3c6e",
-        fg="white",
-        font=("Segoe UI", 9, "bold"),
-        cursor="hand2",
-        relief="flat",
-        padx=8,
-        pady=4,
-    )
-
-    def sel_excel(var, titulo):
-        arch = filedialog.askopenfilename(
-            title=titulo,
-            parent=win,
-            filetypes=[("Archivos Excel", "*.xlsx *.xls"), ("Todos", "*.*")],
-        )
-        if arch:
-            var.set(arch)
-
-    tk.Button(
-        frame_rutas,
-        text="📂 Excel ENTREGAS",
-        command=lambda: sel_excel(ruta_entrega, "Seleccionar Excel de Entregas"),
-        **style_btn,
-    ).grid(row=0, column=0, padx=(0, 8), pady=4, sticky="ew")
-    tk.Entry(
-        frame_rutas,
-        textvariable=ruta_entrega,
-        width=60,
-        state="readonly",
-        font=("Segoe UI", 9),
-        bg="#fff",
-    ).grid(row=0, column=1, pady=4, sticky="ew")
-
-    tk.Button(
-        frame_rutas,
-        text="📂 Excel RETIROS",
-        command=lambda: sel_excel(ruta_retiro, "Seleccionar Excel de Retiros"),
-        **style_btn,
-    ).grid(row=1, column=0, padx=(0, 8), pady=4, sticky="ew")
-    tk.Entry(
-        frame_rutas,
-        textvariable=ruta_retiro,
-        width=60,
-        state="readonly",
-        font=("Segoe UI", 9),
-        bg="#fff",
-    ).grid(row=1, column=1, pady=4, sticky="ew")
-
-    frame_rutas.columnconfigure(1, weight=1)
-
-    frame_opciones = tk.Frame(win, bg=COLORS["fondo"])
-    frame_opciones.pack(fill="x", padx=24, pady=(4, 0))
-
-    tk.Label(
-        frame_opciones, text="Columna N° Serie:", bg=COLORS["fondo"], font=("Segoe UI", 9)
-    ).pack(side="left")
-    entry_col_serie = tk.Entry(frame_opciones, width=22, font=("Segoe UI", 9))
-    entry_col_serie.insert(0, "NUMERO DE SERIE")
-    entry_col_serie.pack(side="left", padx=6)
-
-    tk.Label(
-        frame_opciones,
-        text="(si está vacío, se detecta automáticamente)",
-        bg=COLORS["fondo"],
-        font=("Segoe UI", 8),
-        fg="#94a3b8",
-    ).pack(side="left")
-
-    frame_resumen = tk.Frame(win, bg=COLORS["fondo"])
-    frame_resumen.pack(fill="x", padx=24, pady=(8, 0))
-
-    lbl_ok = tk.Label(
-        frame_resumen,
-        text="✅ Match: —",
-        bg="#dcfce7",
-        fg="#15803d",
-        font=("Segoe UI", 9, "bold"),
-        padx=10,
-        pady=4,
-        relief="flat",
-    )
-    lbl_falta = tk.Label(
-        frame_resumen,
-        text="❌ Faltantes: —",
-        bg="#fee2e2",
-        fg="#dc2626",
-        font=("Segoe UI", 9, "bold"),
-        padx=10,
-        pady=4,
-        relief="flat",
-    )
-    lbl_sobra = tk.Label(
-        frame_resumen,
-        text="❓ Sobrantes: —",
-        bg="#fef3c7",
-        fg="#d97706",
-        font=("Segoe UI", 9, "bold"),
-        padx=10,
-        pady=4,
-        relief="flat",
-    )
-    lbl_diff = tk.Label(
-        frame_resumen,
-        text="⚠️ Diferencias: —",
-        bg="#fce7f3",
-        fg="#be185d",
-        font=("Segoe UI", 9, "bold"),
-        padx=10,
-        pady=4,
-        relief="flat",
-    )
-    for w in (lbl_ok, lbl_falta, lbl_sobra, lbl_diff):
-        w.pack(side="left", padx=4)
-
-    style = ttk.Style()
-    style.configure("Cmp.Treeview", rowheight=22, font=("Segoe UI", 9))
-    style.configure("Cmp.Treeview.Heading", font=("Segoe UI", 9, "bold"))
-
-    cols = ("estado", "serial", "modelo_e", "modelo_r", "diferencias")
-    frame_tree = tk.Frame(win, bg=COLORS["fondo"])
-    frame_tree.pack(fill="both", expand=True, padx=20, pady=8)
-
-    tree = ttk.Treeview(
-        frame_tree, columns=cols, show="headings", height=14, style="Cmp.Treeview"
-    )
-
-    col_cfg = [
-        ("estado", "ESTADO", 115, "center"),
-        ("serial", "N° SERIE", 145, "center"),
-        ("modelo_e", "MODELO (Entrega)", 200, "w"),
-        ("modelo_r", "MODELO (Retiro)", 200, "w"),
-        ("diferencias", "DIFERENCIAS", 310, "w"),
-    ]
-    for cid, txt, w, anchor in col_cfg:
-        tree.heading(cid, text=txt, command=lambda c=cid: _ordenar_columna(tree, c))
-        tree.column(cid, width=w, anchor=anchor, minwidth=60)
-
-    tree.tag_configure("ok", foreground="#15803d", background="#f0fdf4")
-    tree.tag_configure("falta", foreground="#dc2626", background="#fef2f2")
-    tree.tag_configure("sobra", foreground="#d97706", background="#fffbeb")
-    tree.tag_configure("diff", foreground="#be185d", background="#fdf4ff")
-
-    sb_v = ttk.Scrollbar(frame_tree, orient="vertical", command=tree.yview)
-    sb_h = ttk.Scrollbar(frame_tree, orient="horizontal", command=tree.xview)
-    tree.configure(yscrollcommand=sb_v.set, xscrollcommand=sb_h.set)
-    tree.grid(row=0, column=0, sticky="nsew")
-    sb_v.grid(row=0, column=1, sticky="ns")
-    sb_h.grid(row=1, column=0, sticky="ew")
-    frame_tree.rowconfigure(0, weight=1)
-    frame_tree.columnconfigure(0, weight=1)
-
-    _resultado_cache = []
-
-    def _ordenar_columna(tv, col):
-        datos = [(tv.set(k, col), k) for k in tv.get_children("")]
-        datos.sort()
-        for i, (_, k) in enumerate(datos):
-            tv.move(k, "", i)
-
-    COLS_SERIE_CANDIDATAS = [
-        "NUMERO DE SERIE",
-        "NÚMERO DE SERIE",
-        "N° SERIE",
-        "N°SERIE",
-        "SERIAL",
-        "S/N",
-        "SN",
-        "SERIE",
-        "NRO SERIE",
-    ]
-    COLS_MODELO_CANDIDATAS = [
-        "MODELO",
-        "NOMBRE EQUIPO",
-        "EQUIPO",
-        "DESCRIPCION",
-        "DESCRIPCIÓN",
-        "NOMBRE",
-        "DEVICE",
-    ]
-    COLS_HARDWARE = {
-        "RAM": ["RAM", "MEMORIA", "MEMORIA RAM"],
-        "DISCO": ["DISCO", "HDD", "SSD", "ALMACENAMIENTO", "DISCO DURO"],
-        "CPU": ["CPU", "PROCESADOR", "PROCESSOR"],
-    }
-
-    def _detectar_columna(cols_df, candidatas):
-        cols_upper = {c.strip().upper(): c for c in cols_df}
-        for cand in candidatas:
-            if cand in cols_upper:
-                return cols_upper[cand]
-        for cand in candidatas:
-            for col in cols_df:
-                if cand in col.strip().upper():
-                    return col
-        return None
-
-    def _leer_excel(ruta, col_serie_hint=""):
-        try:
-            df = pd.read_excel(ruta, dtype=str)
-        except Exception as e:
-            raise RuntimeError(f"No se pudo leer '{os.path.basename(ruta)}':\n{e}")
-
-        df.columns = [str(c).strip() for c in df.columns]
-
-        col_serie = None
-        if col_serie_hint.strip():
-            col_serie = _detectar_columna(df.columns, [col_serie_hint.strip().upper()])
-        if not col_serie:
-            col_serie = _detectar_columna(df.columns, COLS_SERIE_CANDIDATAS)
-
-        if not col_serie:
-            raise RuntimeError(
-                f"No se encontró la columna de N° de Serie en:\n{os.path.basename(ruta)}\n\n"
-                f"Columnas disponibles:\n{', '.join(df.columns[:15])}"
-            )
-
-        col_modelo = _detectar_columna(df.columns, COLS_MODELO_CANDIDATAS)
-
-        hw_cols = {}
-        for hw_key, candidatas in COLS_HARDWARE.items():
-            c = _detectar_columna(df.columns, candidatas)
-            if c:
-                hw_cols[hw_key] = c
-
-        equipos = {}
-        for _, row in df.iterrows():
-            sn = str(row.get(col_serie, "")).strip()
-            if not sn or sn.lower() in ("nan", "", "none"):
-                continue
-            sn_key = re.sub(r"\s+", "", sn).upper()
-            fila = {
-                "SERIAL_ORIG": sn,
-                "MODELO": str(row.get(col_modelo, "")).strip() if col_modelo else "",
-            }
-            for hw_key, hw_col in hw_cols.items():
-                fila[hw_key] = str(row.get(hw_col, "")).strip()
-            equipos[sn_key] = fila
-
-        return equipos, list(hw_cols.keys())
-
-    def ejecutar_comparacion():
-        nonlocal _resultado_cache
-        _resultado_cache = []
-        tree.delete(*tree.get_children())
-
-        r_e = ruta_entrega.get()
-        r_r = ruta_retiro.get()
-        col_hint = entry_col_serie.get().strip()
-
-        if not r_e or not r_r:
-            messagebox.showwarning(
-                "Faltan archivos", "Selecciona ambos archivos Excel.", parent=win
-            )
-            return
-
-        try:
-            dict_e, hw_e = _leer_excel(r_e, col_hint)
-            dict_r, hw_r = _leer_excel(r_r, col_hint)
-        except RuntimeError as err:
-            messagebox.showerror("Error al leer Excel", str(err), parent=win)
-            return
-
-        hw_comunes = [h for h in hw_e if h in hw_r]
-        cnt_ok, cnt_falta, cnt_sobra, cnt_diff = 0, 0, 0, 0
-
-        for sn, d_e in dict_e.items():
-            if sn not in dict_r:
-                cnt_falta += 1
-                tree.insert(
-                    "",
-                    tk.END,
-                    values=(
-                        "❌ FALTANTE",
-                        d_e["SERIAL_ORIG"],
-                        d_e.get("MODELO", ""),
-                        "—",
-                        "No figura en el Excel de Retiros",
-                    ),
-                    tags=("falta",),
-                )
-                _resultado_cache.append(
-                    {
-                        "ESTADO": "FALTANTE",
-                        "N° SERIE": d_e["SERIAL_ORIG"],
-                        "MODELO (Entrega)": d_e.get("MODELO", ""),
-                        "MODELO (Retiro)": "",
-                        "DIFERENCIAS": "No figura en el Excel de Retiros",
-                    }
-                )
-                continue
-
-            d_r = dict_r[sn]
-            diffs = []
-
-            mod_e = d_e.get("MODELO", "").strip().upper()
-            mod_r = d_r.get("MODELO", "").strip().upper()
-            if mod_e and mod_r and mod_e != mod_r:
-                diffs.append(f"MODELO: '{d_e['MODELO']}' → '{d_r['MODELO']}'")
-
-            for hw in hw_comunes:
-                val_e = d_e.get(hw, "").strip().upper()
-                val_r = d_r.get(hw, "").strip().upper()
-                if val_e and val_r and val_e != val_r:
-                    diffs.append(f"{hw}: '{d_e.get(hw, '')}' → '{d_r.get(hw, '')}'")
-
-            if diffs:
-                cnt_diff += 1
-                tag = "diff"
-                estado = "⚠️ DIFERENCIA"
-            else:
-                cnt_ok += 1
-                tag = "ok"
-                estado = "✅ MATCH"
-
-            diff_str = " | ".join(diffs) if diffs else "Hardware coincide"
-            tree.insert(
-                "",
-                tk.END,
-                values=(
-                    estado,
-                    d_e["SERIAL_ORIG"],
-                    d_e.get("MODELO", ""),
-                    d_r.get("MODELO", ""),
-                    diff_str,
-                ),
-                tags=(tag,),
-            )
-            _resultado_cache.append(
-                {
-                    "ESTADO": estado.replace("✅ ", "").replace("⚠️ ", ""),
-                    "N° SERIE": d_e["SERIAL_ORIG"],
-                    "MODELO (Entrega)": d_e.get("MODELO", ""),
-                    "MODELO (Retiro)": d_r.get("MODELO", ""),
-                    "DIFERENCIAS": diff_str,
-                }
-            )
-
-        for sn, d_r in dict_r.items():
-            if sn not in dict_e:
-                cnt_sobra += 1
-                tree.insert(
-                    "",
-                    tk.END,
-                    values=(
-                        "❓ SOBRANTE",
-                        d_r["SERIAL_ORIG"],
-                        "—",
-                        d_r.get("MODELO", ""),
-                        "No figura en el Excel de Entregas",
-                    ),
-                    tags=("sobra",),
-                )
-                _resultado_cache.append(
-                    {
-                        "ESTADO": "SOBRANTE",
-                        "N° SERIE": d_r["SERIAL_ORIG"],
-                        "MODELO (Entrega)": "",
-                        "MODELO (Retiro)": d_r.get("MODELO", ""),
-                        "DIFERENCIAS": "No figura en el Excel de Entregas",
-                    }
-                )
-
-        lbl_ok.config(text=f"✅ Match: {cnt_ok}")
-        lbl_falta.config(text=f"❌ Faltantes: {cnt_falta}")
-        lbl_sobra.config(text=f"❓ Sobrantes: {cnt_sobra}")
-        lbl_diff.config(text=f"⚠️ Diferencias: {cnt_diff}")
-
-        total = cnt_ok + cnt_falta + cnt_sobra + cnt_diff
-        if total == 0:
-            messagebox.showinfo(
-                "Sin resultados",
-                "No se encontraron equipos válidos en los archivos.",
-                parent=win,
-            )
-
-    def exportar_resultado():
-        if not _resultado_cache:
-            messagebox.showwarning(
-                "Sin datos", "Primero ejecuta la comparación.", parent=win
-            )
-            return
-
-        ruta_out = filedialog.asksaveasfilename(
-            title="Guardar resultado como Excel",
-            defaultextension=".xlsx",
-            filetypes=[("Excel", "*.xlsx")],
-            initialfile=f"Comparacion_Entregas_Retiros_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-            parent=win,
-        )
-        if not ruta_out:
-            return
-
-        try:
-            import openpyxl
-            from openpyxl.styles import Alignment, Font, PatternFill
-        except ImportError:
-            messagebox.showerror(
-                "Falta librería",
-                "Se requiere 'openpyxl' para exportar.\n\npip install openpyxl",
-                parent=win,
-            )
-            return
-
-        try:
-            df_out = pd.DataFrame(_resultado_cache)
-            with pd.ExcelWriter(ruta_out, engine="openpyxl") as writer:
-                df_out.to_excel(writer, index=False, sheet_name="Comparacion")
-                ws = writer.sheets["Comparacion"]
-
-                FILLS = {
-                    "MATCH": PatternFill("solid", fgColor="D1FAE5"),
-                    "FALTANTE": PatternFill("solid", fgColor="FEE2E2"),
-                    "SOBRANTE": PatternFill("solid", fgColor="FEF3C7"),
-                    "DIFERENCIA": PatternFill("solid", fgColor="FAE8FF"),
-                }
-                header_fill = PatternFill("solid", fgColor=MARCA_HEX)
-                header_font = Font(color="FFFFFF", bold=True)
-
-                for cell in ws[1]:
-                    cell.fill = header_fill
-                    cell.font = header_font
-                    cell.alignment = Alignment(horizontal="center")
-
-                for row in ws.iter_rows(min_row=2):
-                    estado_val = str(row[0].value or "").upper()
-                    fill = FILLS.get(estado_val, PatternFill())
-                    for cell in row:
-                        cell.fill = fill
-
-                for col_cells in ws.columns:
-                    max_len = max(
-                        (len(str(c.value or "")) for c in col_cells), default=10
-                    )
-                    ws.column_dimensions[col_cells[0].column_letter].width = min(
-                        max_len + 4, 60
-                    )
-
-            messagebox.showinfo(
-                "✅ Exportado",
-                f"Resultado guardado en:\n{ruta_out}",
-                parent=win,
-            )
-        except Exception as e:
-            messagebox.showerror("Error al exportar", str(e), parent=win)
-
-    frame_bts = tk.Frame(win, bg=COLORS["fondo"])
-    frame_bts.pack(pady=(0, 14))
-
-    tk.Button(
-        frame_bts,
-        text="⚙️  COMPARAR AHORA",
-        command=ejecutar_comparacion,
-        bg="#16a34a",
-        fg="white",
-        font=("Segoe UI", 10, "bold"),
-        padx=20,
-        pady=7,
-        cursor="hand2",
-        relief="flat",
-    ).pack(side="left", padx=8)
-
-    tk.Button(
-        frame_bts,
-        text="💾 EXPORTAR A EXCEL",
-        command=exportar_resultado,
-        bg="#0078d4",
-        fg="white",
-        font=("Segoe UI", 10, "bold"),
-        padx=20,
-        pady=7,
-        cursor="hand2",
-        relief="flat",
-    ).pack(side="left", padx=8)
-
-    tk.Button(
-        frame_bts,
-        text="🗑️  Limpiar",
-        command=lambda: [
-            tree.delete(*tree.get_children()),
-            lbl_ok.config(text="✅ Match: —"),
-            lbl_falta.config(text="❌ Faltantes: —"),
-            lbl_sobra.config(text="❓ Sobrantes: —"),
-            lbl_diff.config(text="⚠️ Diferencias: —"),
-        ],
-        bg="#94a3b8",
-        fg="white",
-        font=("Segoe UI", 9),
-        padx=12,
-        pady=7,
-        cursor="hand2",
-        relief="flat",
-    ).pack(side="left", padx=8)
-
 def abrir_modulo_etiquetas_manual(ventana_padre):
     win = ventana_modal(
         ventana_padre, "Generador Manual de Etiquetas (Equipos Defectuosos)", "750x700"
@@ -4445,7 +3631,10 @@ def abrir_modulo_etiquetas_manual(ventana_padre):
         with open(temp_path, "w", encoding="utf-8") as f:
             f.write(html_etiqueta)
 
-        webbrowser.open(f"file://{temp_path}")
+        # as_uri() y no f"file://{ruta}": en Windows la ruta empieza con "C:\"
+        # y concatenarla deja "file://C:\..." , donde el navegador toma "C:"
+        # como nombre de host y la etiqueta no abre.
+        webbrowser.open(Path(temp_path).as_uri())
 
     tk.Button(
         win,
@@ -5277,7 +4466,6 @@ def mostrar_menu_principal(ventana):
     for texto, comando in (
         ("🔌 AGREGAR TRANSFORMADORES", lambda: abrir_modulo_agregar_transformador(ventana)),
         ("🏷️ GENERAR ETIQUETA MANUAL (Equipos Malos)", lambda: abrir_modulo_etiquetas_manual(ventana)),
-        ("📑 COMPARAR EXCEL (Entregas vs Retiros)", lambda: abrir_modulo_comparacion_excel(ventana)),
         ("💻 CAMBIAR NOMBRE DEL EQUIPO", lambda: abrir_modulo_cambiar_nombre(ventana)),
     ):
         boton_menu(frame_btns, texto, comando, COLORS["pizarra"], size=9)

@@ -584,18 +584,24 @@ function filasValida(d){
 
   /* El transformador va sin nombre: en Valida se carga como accesorio y con la
      descripción alcanza. */
-  if(d.transf) filas.push(["", "TRANSFORMADOR C/ADAPTADOR", d.transf, ""]);
+  if(d.transf) filas.push(["", "TRANSFORMADOR C/ADAPTADOR 45 W PUNTA FINA", d.transf, ""]);
 
   return filas;
 }
 
 function copiarFilas(){
   let txt="";
+  let filasTransf=[];
   document.querySelectorAll('details').forEach(eq=>{
     /* Al portapapeles van solo las 3 primeras columnas: la obs ya viaja dentro
-       de specs y la cuarta es para el CSV. */
-    filasValida(extraerDatos(eq)).forEach(f=>{ txt+=f.slice(0,3).join("\t")+"\n" });
+       de specs y la cuarta es para el CSV. Los transformadores se juntan aparte
+       para pegarlos todos al final, uno debajo del otro. */
+    filasValida(extraerDatos(eq)).forEach(f=>{
+      if(f[1]==="TRANSFORMADOR C/ADAPTADOR 45 W PUNTA FINA") filasTransf.push(f);
+      else txt+=f.slice(0,3).join("\t")+"\n";
+    });
   });
+  filasTransf.forEach(f=>{ txt+=f.slice(0,3).join("\t")+"\n" });
 
   if(!txt){ alert("No hay equipos en el reporte para copiar."); return; }
 
@@ -3797,7 +3803,7 @@ def abrir_modulo_etiquetas_manual(ventana_padre):
               □ BUENA &nbsp;&nbsp;&nbsp; ☑ POR REPARAR &nbsp;&nbsp;&nbsp; □ MALA &nbsp;&nbsp;&nbsp; □ REPUESTO
             </div>
             <table>
-              <thead>
+              <thead>Submit
                 <tr>
                   <th width="20%">REVISIÓN DE COMPONENTES</th>
                   <th width="35%" style="text-align: center;">ESTADO</th>
@@ -4262,7 +4268,7 @@ def abrir_panel_clonacion(ventana_padre):
                 tags=("ok" if marca == "esperado" else "sobra",),
             )
 
-        faltan = [s for s in esperados if s.upper() not in recibidos]
+        faltan = [s for s in esperadoe if s.upper() not in recibidos]
         for sn in faltan:
             tree.insert(
                 "", "end",
@@ -5063,7 +5069,7 @@ def construir_ui_formulario(ventana, data, lote):
 # por SCP. No hay menú ni OT que elegir: el operador no decide nada que pueda
 # equivocarse, y si se distrae, el equipo se manda igual al vencer la espera.
 # ============================================================================
-_ESPERA_CLONACION = 180  # segundos antes del envío automático
+_ESPERA_CLONACION = 800  # segundos antes del envío automático
 
 # Con --sin-ui no se abre NINGUNA ventana: ni la de observaciones ni los avisos
 # finales. Es el modo que necesita el post-script de FOG, donde no hay nadie
@@ -5177,6 +5183,7 @@ def _observaciones_consola(data, lote, espera):
             "Observaciones (Enter = ninguna): ", espera
         )
         if not respondio:
+            
             return obs, False, True
         # Ya está frente al teclado: para la segunda pregunta alcanza con un
         # margen corto, no hace falta repetir la espera larga.
@@ -5255,7 +5262,7 @@ def _ventana_observaciones(data, lote, espera):
     lbl_cuenta.pack(pady=(6, 0))
 
     def terminar(enviar=True):
-        resultado["obs"] = txt_obs.get("1.0", "end").strip()
+        resultado["obs"] = txt_obs.get("1.0", "end").strip().upper()
         resultado["fallas"] = var_fallas.get()
         resultado["enviar"] = enviar
         try:

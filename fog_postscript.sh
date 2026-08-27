@@ -1,24 +1,4 @@
 #!/bin/bash
-# ===========================================================================
-#  Post-download script de FOG — inyecta REPORTE3 en el equipo recién clonado
-# ---------------------------------------------------------------------------
-#  Corre en el Linux de FOG, con la imagen ya escrita y antes del reboot.
-#  NO ejecuta el programa: solo deja los archivos y lo programa en el arranque
-#  de Windows, porque acá todavía no hay Windows corriendo.
-#
-#  En el servidor de FOG, ${postdownpath} tiene que contener:
-#
-#      REPORTE3/            la carpeta COMPLETA de dist\ (exe + _internal)
-#      id_clonado           la clave privada SSH  <-- SIN esto no puede enviar
-#      fog_postscript.bat   el lanzador que corre en el primer login
-#
-#  El build es "onedir": REPORTE3.exe suelto NO arranca, necesita _internal
-#  al lado. Por eso se copia la carpeta entera.
-#
-#  Antes de clonar, en la PC central: abrir REPORTE3 -> PANEL DE CLONACION ->
-#  "Publicar OT activa". Todo lo que se clone después cae en esa OT.
-# ===========================================================================
-
 # Cargar las funciones internas de FOG (CRÍTICO)
 . /usr/share/fog/lib/funcs.sh
 

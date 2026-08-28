@@ -25,10 +25,10 @@ set "CARPETA=%PUBLIC%\Desktop\Reporte"
 set "LOG=%CARPETA%\registro_clonacion.log"
 
 REM Sin ventanas. Si alguien lo corre a mano desde un cmd, igual puede escribir
-REM las observaciones por consola antes del envio; si nadie contesta en ESPERA
-REM segundos, se manda solo. Con 0 espera indefinidamente.
-set "MODO=--sin-ui --espera 180"
-REM Para volver a la ventana grafica de observaciones: set "MODO=--espera 180"
+REM las observaciones por consola antes del envio; sin consola (arranque real
+REM de FOG) se manda directo. No hay envio automatico por tiempo.
+set "MODO=--sin-ui"
+REM Para volver a la ventana grafica de observaciones: set "MODO="
 
 if not exist "%CARPETA%\REPORTE3.exe" (
     echo No se encontro REPORTE3.exe en %CARPETA%

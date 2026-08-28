@@ -5062,14 +5062,13 @@ def construir_ui_formulario(ventana, data, lote):
 # ============================================================================
 # 11. MODO CLONACIÓN (sin menú) — para el post-script de FOG
 # ----------------------------------------------------------------------------
-# Se invoca como:  REPORTE3.exe --clonacion [--espera SEGUNDOS]
+# Se invoca como:  REPORTE3.exe --clonacion [--sin-ui]
 #
 # Corre solo en el equipo recién clonado: pregunta al servidor a qué OT
 # pertenece, escanea, abre UNA ventana para las observaciones y manda el JSON
-# por SCP. No hay menú ni OT que elegir: el operador no decide nada que pueda
-# equivocarse, y si se distrae, el equipo se manda igual al vencer la espera.
+# por SCP. No hay menú ni OT que elegir, y el envío se manda solo cuando el
+# operador lo confirma: no hay envío automático por tiempo.
 # ============================================================================
-_ESPERA_CLONACION = 800  # segundos antes del envío automático
 
 # Con --sin-ui no se abre NINGUNA ventana: ni la de observaciones ni los avisos
 # finales. Es el modo que necesita el post-script de FOG, donde no hay nadie
@@ -5100,66 +5099,12 @@ def _hay_consola():
         return False
 
 
-def _leer_linea_con_espera(prompt, espera):
-    """
-    Lee una línea de la consola con cuenta regresiva. Devuelve (texto, respondió).
-
-    Apenas el operador toca una tecla se cancela el auto-envío: si está
-    escribiendo la observación no se le puede cortar la frase por la mitad.
-    Con espera <= 0 se espera indefinidamente, igual que en la ventana.
-    """
-    print(prompt, end="", flush=True)
-    try:
-        import msvcrt
-    except ImportError:  # fuera de Windows no hay cuenta regresiva posible
-        return input().strip(), True
-
-    escrito = []
-    limite = time.monotonic() + espera if espera > 0 else None
-    ultimo_aviso = None
-
-    while True:
-        if msvcrt.kbhit():
-            tecla = msvcrt.getwch()
-            if tecla in ("\x00", "\xe0"):  # flechas y F1..F12 llegan de a dos
-                msvcrt.getwch()
-                continue
-            if tecla == "\x03":            # Ctrl+C
-                raise KeyboardInterrupt
-            if tecla in ("\r", "\n"):
-                print(flush=True)
-                return "".join(escrito).strip(), True
-            if tecla == "\b":
-                if escrito:
-                    escrito.pop()
-                    print("\b \b", end="", flush=True)
-                continue
-            escrito.append(tecla)
-            print(tecla, end="", flush=True)
-            limite = None                  # ya está escribiendo: no se le corta
-            continue
-
-        if limite is not None:
-            restante = limite - time.monotonic()
-            if restante <= 0:
-                print("\n[REPORTE3] Espera agotada: se envía automáticamente.",
-                      flush=True)
-                return "".join(escrito).strip(), False
-            # Hacia arriba: con int() a secas la espera se acortaba un segundo
-            # y --espera 1 no llegaba a mostrarse nunca.
-            segundos = int(restante) + 1
-            if segundos != ultimo_aviso and segundos % 30 == 0:
-                ultimo_aviso = segundos
-                print(f"\n(envío automático en {segundos}s) {prompt}"
-                      f"{''.join(escrito)}", end="", flush=True)
-        time.sleep(0.05)
-
-
-def _observaciones_consola(data, lote, espera):
+def _observaciones_consola(data, lote):
     """
     La ventana de observaciones, pero en la consola. Mismo contrato que
     _ventana_observaciones: devuelve (observaciones, tiene_fallas, enviar), y
-    todo esto pasa ANTES del SCP.
+    todo esto pasa ANTES del SCP. Espera a que el operador conteste, sin envío
+    automático por tiempo.
     """
     print("")
     print("=" * 64)
@@ -5173,36 +5118,28 @@ def _observaciones_consola(data, lote, espera):
     ):
         print(f"  {etiqueta:<18}{valor}")
     print("-" * 64)
-    if espera > 0:
-        print(f"  Si no escribís nada, se envía solo en {espera}s.")
     print("  Ctrl+C cancela el registro.")
     print("")
 
     try:
-        obs, respondio = _leer_linea_con_espera(
-            "Observaciones (Enter = ninguna): ", espera
-        )
-        if not respondio:
-            
-            return obs, False, True
-        # Ya está frente al teclado: para la segunda pregunta alcanza con un
-        # margen corto, no hace falta repetir la espera larga.
-        resp, _ = _leer_linea_con_espera("¿El equipo tiene fallas? [s/N]: ", 60)
-        return obs, resp.strip().lower().startswith("s"), True
+        obs = input("Observaciones (Enter = ninguna): ").strip()
+        resp = input("¿El equipo tiene fallas? [s/N]: ").strip()
+        return obs, resp.lower().startswith("s"), True
     except KeyboardInterrupt:
         print("\n[REPORTE3] Cancelado por el operador.", flush=True)
         return "", False, False
 
 
-def _ventana_observaciones(data, lote, espera):
+def _ventana_observaciones(data, lote):
     """
     Ventana única del modo clonación: muestra lo escaneado y toma las
     observaciones. Devuelve (observaciones, tiene_fallas, enviar).
 
     'enviar' sale en False solo si el operador cancela a propósito; si la
-    ventana se cierra o se agota la espera se manda igual, porque el costo de
-    perder el registro de un equipo ya clonado es mucho mayor que el de
-    mandarlo sin observaciones.
+    ventana se cierra con la X se manda igual, porque el costo de perder el
+    registro de un equipo ya clonado es mucho mayor que el de mandarlo sin
+    observaciones. No hay envío automático por tiempo: espera lo que haga
+    falta a que el operador decida.
     """
     resultado = {"obs": "", "fallas": False, "enviar": True}
 
@@ -5256,11 +5193,6 @@ def _ventana_observaciones(data, lote, espera):
         activebackground=COLORS["fondo"], selectcolor="white",
     ).pack(anchor="w", padx=22, pady=(6, 0))
 
-    lbl_cuenta = tk.Label(
-        win, text="", font=fuente(8), bg=COLORS["fondo"], fg=COLORS["gris"]
-    )
-    lbl_cuenta.pack(pady=(6, 0))
-
     def terminar(enviar=True):
         resultado["obs"] = txt_obs.get("1.0", "end").strip().upper()
         resultado["fallas"] = var_fallas.get()
@@ -5280,25 +5212,11 @@ def _ventana_observaciones(data, lote, espera):
     # Cerrar con la X equivale a enviar: es lo que hace el operador apurado.
     win.protocol("WM_DELETE_WINDOW", lambda: terminar(True))
 
-    restante = {"seg": max(0, int(espera))}
-
-    def tic():
-        if restante["seg"] <= 0:
-            _log_clon("Espera agotada: se envía automáticamente.")
-            terminar(True)
-            return
-        minutos, seg = divmod(restante["seg"], 60)
-        lbl_cuenta.config(text=f"Envío automático en {minutos}:{seg:02d}")
-        restante["seg"] -= 1
-        win.after(1000, tic)
-
-    if espera > 0:
-        tic()
     win.mainloop()
     return resultado["obs"], resultado["fallas"], resultado["enviar"]
 
 
-def modo_clonacion(espera=_ESPERA_CLONACION, sin_ui=False):
+def modo_clonacion(sin_ui=False):
     """
     Flujo completo del equipo clonado. Devuelve el código de salida del proceso
     (0 = enviado), pensado para que el post-script de FOG sepa si funcionó.
@@ -5342,12 +5260,12 @@ def modo_clonacion(espera=_ESPERA_CLONACION, sin_ui=False):
         _log_clon(f"Equipo: {data.get('model')} / {data.get('serial')}")
 
         if sin_ui and _hay_consola():
-            obs, tiene_fallas, enviar = _observaciones_consola(data, lote, espera)
+            obs, tiene_fallas, enviar = _observaciones_consola(data, lote)
         elif sin_ui:
             _log_clon("Sin UI y sin consola: se envía sin observaciones.")
             obs, tiene_fallas, enviar = "", False, True
         else:
-            obs, tiene_fallas, enviar = _ventana_observaciones(data, lote, espera)
+            obs, tiene_fallas, enviar = _ventana_observaciones(data, lote)
         if not enviar:
             _log_clon("Cancelado por el operador.")
             return 1
@@ -5566,15 +5484,13 @@ def main(argv=None):
         print(
             "REPORTE3 — Sistema de Control de Inventario\n\n"
             "  REPORTE3.exe                       menú normal\n" "  REPORTE3.exe --verificar           chequea el envío desde ESTE equipo\n"
-            "  REPORTE3.exe --clonacion           registro automático del equipo\n"
-            "  REPORTE3.exe --clonacion --espera 120\n"
-            "                                     segundos antes del envío\n"
-            "                                     automático (0 = sin límite)\n"
+            "  REPORTE3.exe --clonacion           registro automático del equipo,\n"
+            "                                     envía cuando lo confirmás\n"
             "  REPORTE3.exe --clonacion --sin-ui  sin ninguna ventana: en un cmd\n"
             "                                     pide las observaciones por\n"
             "                                     consola antes de enviar; sin\n"
-            "                                     consola manda directo. Respeta\n"
-            "                                     --espera y Ctrl+C cancela.\n\n"
+            "                                     consola manda directo.\n"
+            "                                     Ctrl+C cancela.\n\n"
             "Códigos de salida en modo clonación:\n"
             "  0 enviado   1 cancelado   2 sin conexión\n"
             "  3 sin OT activa   4 falló el escaneo   5 error inesperado\n"
@@ -5585,15 +5501,7 @@ def main(argv=None):
         return diagnostico_scp()
 
     if "--clonacion" in argv:
-        espera = _ESPERA_CLONACION
-        if "--espera" in argv:
-            try:
-                espera = int(argv[argv.index("--espera") + 1])
-            except (IndexError, ValueError):
-                _log_clon(
-                    f"--espera inválido, se usa el valor por defecto ({espera}s)"
-                )
-        return modo_clonacion(espera, sin_ui="--sin-ui" in argv)
+        return modo_clonacion(sin_ui="--sin-ui" in argv)
 
     iniciar_interfaz_principal()
     return 0

@@ -598,10 +598,11 @@ function filasValida(d){
     filas.push([lbl, dk.desc, dk.serial, ""]);
   });
 
-  /* Sin 'Key:' no hay nada que cargar: la fila de Office existe en el HTML
-     aunque SN_APP esté PENDIENTE (ver construir_entry_html), y exportarla daría
-     una fila con la serie en blanco. */
-  if(d.office && d.office.includes('Key:')){
+  /* d.office solo existe si tiene_office fue true al cargar el equipo (ver
+     construir_entry_html): si el registro no llevaba Office, esta fila no
+     entra. La key puede faltar (SN_APP="PENDIENTE") y aun así el equipo
+     lleva Office, así que la fila se exporta igual, con la serie en blanco. */
+  if(d.office){
     let ver=(d.office.match(/Office\s+([A-Za-z0-9]+)/)||[])[1]||"2016";
     let key=(d.office.match(/Key:\s*([^)]+)/)||[])[1]||"";
     filas.push([`OFFICE ${ver}`, "HOME AND BUSINESS", key.trim(), ""]);
@@ -4844,8 +4845,9 @@ def _observaciones_consola(data, lote):
     """
     La ventana de observaciones, pero en la consola. Mismo contrato que
     _ventana_observaciones: devuelve (observaciones, detalle_componentes,
-    enviar), y todo esto pasa ANTES del SCP. Espera a que el operador
-    conteste, sin envío automático por tiempo.
+    enviar, tiene_office, office_key, version_office), y todo esto pasa ANTES
+    del SCP. Espera a que el operador conteste, sin envío automático por
+    tiempo.
 
     Sin consola no tiene sentido pedir componente por componente como en la
     ventana: si hay fallas, quedan anotadas en un único ítem "Estado general"
@@ -4875,10 +4877,18 @@ def _observaciones_consola(data, lote):
             if tiene_fallas
             else []
         )
-        return obs, componentes, True
+        resp_office = input("¿Va con Office? [s/N]: ").strip()
+        tiene_office = resp_office.lower().startswith("s")
+        version_office, office_key = "", ""
+        if tiene_office:
+            version_office = (
+                input("Versión de Office (Enter = 2016): ").strip() or "2016"
+            )
+            office_key = input("Key de Office (Enter = sin key): ").strip()
+        return obs, componentes, True, tiene_office, office_key, version_office
     except KeyboardInterrupt:
         print("\n[REPORTE3] Cancelado por el operador.", flush=True)
-        return "", [], False
+        return "", [], False, False, "", ""
 
 
 def _ventana_observaciones(data, lote):
@@ -4886,7 +4896,8 @@ def _ventana_observaciones(data, lote):
     Ventana única del modo clonación: muestra lo escaneado y toma la misma
     revisión de componentes que la ventana de retiro (pantalla, teclado,
     placa base, etc.), para que esa información quede lista al armar la
-    etiqueta del equipo. Devuelve (observaciones, detalle_componentes, enviar).
+    etiqueta del equipo. Devuelve (observaciones, detalle_componentes, enviar,
+    tiene_office, office_key, version_office).
 
     'enviar' sale en False solo si el operador cancela a propósito; si la
     ventana se cierra con la X se manda igual, porque el costo de perder el
@@ -4894,7 +4905,14 @@ def _ventana_observaciones(data, lote):
     observaciones. No hay envío automático por tiempo: espera lo que haga
     falta a que el operador decida.
     """
-    resultado = {"obs": "", "componentes": [], "enviar": True}
+    resultado = {
+        "obs": "",
+        "componentes": [],
+        "enviar": True,
+        "tiene_office": False,
+        "office_key": "",
+        "version_office": "",
+    }
 
     win = tk.Tk()
     win.title(f"Registro de equipo — {etiqueta_lote(lote)}")
@@ -5022,6 +5040,43 @@ def _ventana_observaciones(data, lote):
     txt_obs.pack(fill="x", pady=(0, 12))
     txt_obs.focus_set()
 
+    frame_off = tk.Frame(interior, bg=COLORS["fondo"])
+    frame_off.pack(fill="x", pady=(0, 4))
+    var_office = tk.IntVar()
+
+    def toggle_office():
+        state = tk.NORMAL if var_office.get() else tk.DISABLED
+        entry_office.config(state=state)
+        combo_ver.config(state="readonly" if var_office.get() else tk.DISABLED)
+        if not var_office.get():
+            entry_office.delete(0, tk.END)
+
+    tk.Checkbutton(
+        frame_off,
+        text="📦 Registrar Office",
+        variable=var_office,
+        command=toggle_office,
+        bg=COLORS["fondo"],
+        font=("Segoe UI", 10, "bold"),
+        fg="#1e40af",
+        activebackground="#eef2f7",
+        cursor="hand2",
+    ).pack(side="left")
+    combo_ver = ttk.Combobox(
+        frame_off,
+        values=["2013", "2016", "2019", "2021", "2024", "365"],
+        width=8,
+        state=tk.DISABLED,
+        font=("Segoe UI", 10),
+    )
+    combo_ver.set("2016")
+    combo_ver.pack(side="left", padx=6)
+
+    entry_office = tk.Entry(
+        interior, font=("Consolas", 10), justify="center", state=tk.DISABLED, fg="#555"
+    )
+    entry_office.pack(fill="x", ipady=4, pady=(0, 12))
+
     def terminar(enviar=True):
         resultado["obs"] = txt_obs.get("1.0", "end").strip().upper()
         resultado["componentes"] = [
@@ -5033,6 +5088,9 @@ def _ventana_observaciones(data, lote):
             for c in comps_data
         ]
         resultado["enviar"] = enviar
+        resultado["tiene_office"] = var_office.get() == 1
+        resultado["office_key"] = entry_office.get().strip()
+        resultado["version_office"] = combo_ver.get()
         try:
             win.destroy()
         except Exception:
@@ -5047,7 +5105,14 @@ def _ventana_observaciones(data, lote):
     win.protocol("WM_DELETE_WINDOW", lambda: terminar(True))
 
     win.mainloop()
-    return resultado["obs"], resultado["componentes"], resultado["enviar"]
+    return (
+        resultado["obs"],
+        resultado["componentes"],
+        resultado["enviar"],
+        resultado["tiene_office"],
+        resultado["office_key"],
+        resultado["version_office"],
+    )
 
 
 def modo_clonacion(sin_ui=False):
@@ -5094,12 +5159,27 @@ def modo_clonacion(sin_ui=False):
         _log_clon(f"Equipo: {data.get('model')} / {data.get('serial')}")
 
         if sin_ui and _hay_consola():
-            obs, detalle_componentes, enviar = _observaciones_consola(data, lote)
+            (
+                obs,
+                detalle_componentes,
+                enviar,
+                tiene_office,
+                office_key,
+                version_office,
+            ) = _observaciones_consola(data, lote)
         elif sin_ui:
             _log_clon("Sin UI y sin consola: se envía sin observaciones.")
             obs, detalle_componentes, enviar = "", [], True
+            tiene_office, office_key, version_office = False, "", ""
         else:
-            obs, detalle_componentes, enviar = _ventana_observaciones(data, lote)
+            (
+                obs,
+                detalle_componentes,
+                enviar,
+                tiene_office,
+                office_key,
+                version_office,
+            ) = _ventana_observaciones(data, lote)
         if not enviar:
             _log_clon("Cancelado por el operador.")
             return 1
@@ -5107,7 +5187,9 @@ def modo_clonacion(sin_ui=False):
         # Se guarda con la misma función que el flujo normal: el JSON queda
         # idéntico al de un escaneo manual, así el panel y la reconstrucción
         # no tienen que distinguir de dónde vino.
-        guardar_equipo_general(lote, data, obs, False, "", "", detalle_componentes)
+        guardar_equipo_general(
+            lote, data, obs, tiene_office, office_key, version_office, detalle_componentes
+        )
         ruta_json = ruta_json_equipo(lote, data["serial"])
         _log_clon(f"JSON local: {ruta_json}")
 

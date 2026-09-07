@@ -3,7 +3,7 @@ Sistema de Control de Inventario — Arrienda.cl
 ==============================================
 
 Aplicación de escritorio (Tkinter) para escanear el hardware de un equipo,
-registrar entregas/retiros y generar reportes HTML, JSON y Word.
+registrar entregas/retiros y generar reportes HTML y JSON.
 
 ÍNDICE DEL ARCHIVO (buscá el banner "==== NOMBRE ====" para saltar):
 
@@ -13,25 +13,22 @@ registrar entregas/retiros y generar reportes HTML, JSON y Word.
                                  boton_accion, marco_scrolleable, treeview_auditoria).
   3. SCANNER (PowerShell)      — PS_SCRIPT: script embebido que lee el hardware.
   4. PLANTILLA HTML DEL REPORTE — HTML_START / HTML_END (CSS + JS del reporte).
-  5. EXPORT WORD               — helpers docx + generar_informe_word (informe de
-                                 fallas; lo dispara cerrar_lote, ver sección 7).
-  6. SCANNER (ejecución)       — get_inventory_fast: corre PS_SCRIPT y parsea.
-  7. PERSISTENCIA              — modelo de LOTES por OT/guía, construir_entry_html,
+  5. SCANNER (ejecución)       — get_inventory_fast: corre PS_SCRIPT y parsea.
+  6. PERSISTENCIA              — modelo de LOTES por OT/guía, construir_entry_html,
                                  guardar_equipo_general, cerrar_lote, crear_backup,
                                  envío al servidor por SCP.
-  8. RECONSTRUCCIÓN / MERGE    — rearmar HTML desde los JSON guardados.
-  9. MÓDULOS (Toplevel)        — etiquetas manuales, transformadores, panel de
+  7. RECONSTRUCCIÓN / MERGE    — rearmar HTML desde los JSON guardados.
+  8. MÓDULOS (Toplevel)        — etiquetas manuales, transformadores, panel de
                                  clonación y cambio de nombre del equipo.
- 10. UI PRINCIPAL              — menú, pantalla de escaneo y formulario.
- 11. MODO CLONACIÓN            — flujo headless --clonacion para el post-script
+  9. UI PRINCIPAL              — menú, pantalla de escaneo y formulario.
+ 10. MODO CLONACIÓN            — flujo headless --clonacion para el post-script
                                  de FOG (sin menú ni elección de OT).
- 12. ENTRYPOINT                — iniciar_interfaz_principal / __main__.
+ 11. ENTRYPOINT                — iniciar_interfaz_principal / __main__.
 
 DISPOSICIÓN EN DISCO (todo cuelga de ./Reportes_Guardados):
 
     ENTREGA/<CLIENTE>/OT-553/      equipos, HTML y FUSIONADO de esa OT
-    RETIROS/<CLIENTE>/GUIA-8891/   ídem para retiros (+ informe Word de fallas,
-                                   que se escribe recién al CERRAR la OT)
+    RETIROS/<CLIENTE>/GUIA-8891/   ídem para retiros
     _BACKUPS/Backup_<fecha>_<hora>_<motivo>.zip
     .lote_activo.json              puntero al lote que recibe lo escaneado
 
@@ -40,7 +37,7 @@ Los marcadores dentro de cada carpeta de OT mandan sobre su estado:
 '.enviado' = ya subida al servidor (control local; no viaja).
 
 El envío al servidor va por SCP (SSH) y sube SOLO lo que es fuente de verdad o
-entregable: los JSON individuales, el FUSIONADO, el Word de fallas y los
+entregable: los JSON individuales, el FUSIONADO y los
 marcadores. El HTML no viaja: es un derivado y allá se rearma con
 "RECONSTRUIR DESDE JSONs", que produce un reporte idéntico y con todas sus
 funcionalidades (copiar filas, CSV de Valida, fusionado, etiquetas).
@@ -99,18 +96,6 @@ try:
 except ImportError:
     REQUESTS_AVAILABLE = False
 
-# Importar librería para crear Word (docx)
-try:
-    from docx import Document
-    from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
-    from docx.oxml import OxmlElement
-    from docx.oxml.ns import qn
-    from docx.shared import Cm, Pt, RGBColor
-
-    DOCX_AVAILABLE = True
-except ImportError:
-    DOCX_AVAILABLE = False
-
 # ============================================================================
 # 1. CONFIGURACIÓN
 # ----------------------------------------------------------------------------
@@ -119,7 +104,7 @@ except ImportError:
 # .exe: son la única fuente de verdad de la conexión.
 #
 # Al servidor viajan SOLO los archivos que son FUENTE DE VERDAD o entregables:
-# los JSON individuales, el JSON FUSIONADO, el informe Word y el marcador
+# los JSON individuales, el JSON FUSIONADO y el marcador
 # '.cerrado'. El HTML NO se sube: es un derivado y se rearma allá con
 # "RECONSTRUIR DESDE JSONs", que produce un reporte idéntico y 100% funcional.
 # ============================================================================
@@ -148,24 +133,38 @@ SCP_TIMEOUT = 20                   # segundos para conectar antes de fallar
 # las plantillas f-string). Cambiar el look de la app se hace desde aquí.
 # ============================================================================
 
-# Color de marca (azul corporativo) como fuente única para Tkinter y Word.
-MARCA_RGB = (0x1A, 0x3C, 0x6E)
-MARCA_HEX = "1A3C6E"
-
 COLORS = {
-    "fondo": "#eef2f7",          # fondo general de ventanas
-    "azul": "#1a3c6e",           # azul de marca (títulos, botones de ruta)
-    "azul_btn": "#0078d4",       # botón principal "escanear"
+    "fondo": "#f1f5f9",          # fondo general de ventanas (slate-100)
+    "borde": "#e2e8f0",          # borde sutil de tarjetas/paneles (slate-200)
+    "azul": "#1e3a8a",           # azul de marca (títulos, botones de ruta)
+    "azul_btn": "#2563eb",       # botón principal "escanear"
     "verde": "#16a34a",          # acción / OK
     "verde_esmeralda": "#059669",
     "naranja": "#d97706",        # advertencia / enviar red
     "morado": "#7c3aed",         # reconstruir
-    "celeste": "#0ea5e9",        # manejo de la OT (nueva / cambiar / refrescar)
+    "celeste": "#0284c7",        # manejo de la OT (nueva / cambiar / refrescar)
     "pizarra": "#475569",        # etiquetas
     "gris": "#64748b",           # texto secundario
-    "gris_oscuro": "#334155",
+    "gris_oscuro": "#1e293b",
     "blanco": "white",
 }
+
+
+def _ajustar_color(color_hex, factor):
+    """
+    Aclara (factor > 0) u oscurece (factor < 0) un color hex. Sirve para
+    calcular el tono de hover de un botón a partir de su propio color, sin
+    tener que declarar un segundo color a mano por cada uno.
+    """
+    color_hex = color_hex.lstrip("#")
+    r, g, b = (int(color_hex[i : i + 2], 16) for i in (0, 2, 4))
+    if factor >= 0:
+        r, g, b = (int(c + (255 - c) * factor) for c in (r, g, b))
+    else:
+        r, g, b = (int(c * (1 + factor)) for c in (r, g, b))
+    return "#{:02x}{:02x}{:02x}".format(
+        max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b))
+    )
 
 
 def fuente(size=9, bold=False):
@@ -187,10 +186,17 @@ def titulo_ui(parent, texto, size=14, pady=12, fg=None):
 
 
 def ventana_modal(padre, titulo_ventana, geometria):
-    """Crea un Toplevel modal con el fondo y grab_set estándar."""
+    """
+    Crea un Toplevel modal con el fondo y grab_set estándar. Ya es
+    redimensionable (default de Tk); se fija como tamaño mínimo el mismo
+    'geometria' inicial para que no se pueda achicar a un tamaño inservible
+    donde el contenido quede inalcanzable.
+    """
     win = tk.Toplevel(padre)
     win.title(titulo_ventana)
     win.geometry(geometria)
+    ancho, alto = (int(n) for n in geometria.split("x"))
+    win.minsize(ancho, alto)
     win.configure(bg=COLORS["fondo"])
     win.grab_set()
     return win
@@ -231,35 +237,54 @@ def marco_scrolleable(padre, bg=None):
     return contenedor, interior, canvas
 
 
+def _con_hover(boton, color_normal, color_hover):
+    """Cambia el bg del botón al pasar el mouse; lo devuelve para poder encadenar."""
+    boton.bind("<Enter>", lambda e: boton.config(bg=color_hover))
+    boton.bind("<Leave>", lambda e: boton.config(bg=color_normal))
+    return boton
+
+
 def boton_menu(parent, texto, comando, color, size=11, bold="bold"):
-    """Botón ancho del menú/pantallas (relleno horizontal)."""
-    tk.Button(
+    """Botón ancho del menú/pantallas (relleno horizontal), con hover."""
+    color_hover = _ajustar_color(color, -0.12)
+    btn = tk.Button(
         parent,
         text=texto,
         command=comando,
         bg=color,
         fg="white",
+        activebackground=color_hover,
+        activeforeground="white",
         font=("Segoe UI", size, bold),
         pady=10,
         cursor="hand2",
         relief="flat",
-    ).pack(fill="x", pady=6)
+        bd=0,
+    )
+    btn.pack(fill="x", pady=6)
+    _con_hover(btn, color, color_hover)
 
 
-def boton_accion(parent, texto, comando, color=None, padx=18, pady=7):
-    """Botón de acción destacado (por defecto verde). El caller lo empaqueta."""
-    return tk.Button(
+def boton_accion(parent, texto, comando, color=None, padx=18, pady=7, font=None):
+    """Botón de acción destacado (por defecto verde), con hover. El caller lo empaqueta."""
+    color = color or COLORS["verde"]
+    color_hover = _ajustar_color(color, -0.12)
+    btn = tk.Button(
         parent,
         text=texto,
         command=comando,
-        bg=color or COLORS["verde"],
+        bg=color,
         fg="white",
-        font=fuente(10, True),
+        activebackground=color_hover,
+        activeforeground="white",
+        font=font or fuente(10, True),
         padx=padx,
         pady=pady,
         cursor="hand2",
         relief="flat",
+        bd=0,
     )
+    return _con_hover(btn, color, color_hover)
 
 
 def treeview_auditoria(win, cols_spec, height):
@@ -304,7 +329,7 @@ def treeview_auditoria(win, cols_spec, height):
 # 3. SCANNER (PowerShell)
 # ----------------------------------------------------------------------------
 # Script embebido que recolecta el hardware vía CIM/WMI + powercfg y lo emite
-# como JSON. Se ejecuta desde get_inventory_fast() (sección 6).
+# como JSON. Se ejecuta desde get_inventory_fast() (sección 5).
 # ============================================================================
 PS_SCRIPT = """
 $ErrorActionPreference = 'SilentlyContinue'
@@ -840,215 +865,8 @@ function imprimirTodasEtiquetas() {
 
 HTML_END = "\n</div></div></body></html>"
 
-# ─────────────────────────────────────────────────────────
-#  Helpers de formato para python-docx
-# ─────────────────────────────────────────────────────────
-
-
 # ============================================================================
-# 5. EXPORT WORD
-# ----------------------------------------------------------------------------
-# Helpers de formato docx + generar_informe_word: informe técnico de equipos
-# defectuosos. Requiere python-docx (DOCX_AVAILABLE).
-#
-# CUÁNDO SE CREA EL INFORME: nadie llama acá al escanear ni al guardar un
-# equipo. El informe nace en un solo punto del flujo normal —cerrar_lote()—
-# y solo si se cumplen las TRES condiciones a la vez:
-#   1) la OT es de RETIRO  (una Entrega nunca genera informe; de hecho el panel
-#      de "Revisión de Componentes" del formulario está oculto en las entregas),
-#   2) al menos un equipo quedó con TIENE_FALLAS=True, o sea con algún
-#      componente marcado OBS o MALO, y
-#   3) la OT se cierra de verdad (botón CERRAR OT).
-# Si falta cualquiera de las tres no hay .docx y tampoco hay error: es el
-# comportamiento esperado.
-#
-# La otra vía es _reconstruir_carpeta_suelta() (sección 8), que sí lo regenera
-# al rearmar una carpeta bajada del servidor. OJO con la asimetría: regenerar
-# una OT canónica con "RECONSTRUIR DESDE JSONs" rehace el HTML y el FUSIONADO
-# pero NO vuelve a escribir el Word.
-# ============================================================================
-def _set_paragraph_spacing(paragraph, space_before=0, space_after=0, line_spacing=None):
-    pPr = paragraph._p.get_or_add_pPr()
-    spacing = OxmlElement("w:spacing")
-    spacing.set(qn("w:before"), str(int(space_before * 20)))
-    spacing.set(qn("w:after"), str(int(space_after * 20)))
-    if line_spacing:
-        spacing.set(qn("w:line"), str(int(line_spacing * 240)))
-        spacing.set(qn("w:lineRule"), "auto")
-    pPr.append(spacing)
-
-
-def _add_horizontal_rule(doc):
-    p = doc.add_paragraph()
-    pPr = p._p.get_or_add_pPr()
-    pBdr = OxmlElement("w:pBdr")
-    bottom = OxmlElement("w:bottom")
-    bottom.set(qn("w:val"), "single")
-    bottom.set(qn("w:sz"), "6")
-    bottom.set(qn("w:space"), "1")
-    bottom.set(qn("w:color"), MARCA_HEX)
-    pBdr.append(bottom)
-    pPr.append(pBdr)
-    _set_paragraph_spacing(p, space_before=0, space_after=4)
-    return p
-
-
-def _add_campo(
-    doc, etiqueta, valor, etiqueta_bold=True, valor_bold=False, font_size=11
-):
-    p = doc.add_paragraph()
-    _set_paragraph_spacing(p, space_before=0, space_after=2)
-    run_lbl = p.add_run(etiqueta)
-    run_lbl.bold = etiqueta_bold
-    run_lbl.font.size = Pt(font_size)
-    run_lbl.font.name = "Arial"
-    run_val = p.add_run(valor)
-    run_val.bold = valor_bold
-    run_val.font.size = Pt(font_size)
-    run_val.font.name = "Arial"
-    return p
-
-
-def _add_titulo_seccion(
-    doc, texto, font_size=11, uppercase=True, space_before=10, space_after=4
-):
-    p = doc.add_paragraph()
-    _set_paragraph_spacing(p, space_before=space_before, space_after=space_after)
-    run = p.add_run(texto.upper() if uppercase else texto)
-    run.bold = True
-    run.font.size = Pt(font_size)
-    run.font.name = "Arial"
-    run.font.color.rgb = RGBColor(*MARCA_RGB)
-    return p
-
-
-# ─────────────────────────────────────────────────────────
-#  Generación de Word (Docx)
-# ─────────────────────────────────────────────────────────
-
-
-def generar_informe_word(cliente, equipos_malos, ruta_cliente, id_lote=""):
-    if not DOCX_AVAILABLE:
-        messagebox.showwarning(
-            "Falta Librería", "No se pudo generar el Word porque falta 'python-docx'."
-        )
-        return
-
-    try:
-        doc = Document()
-
-        for section in doc.sections:
-            section.top_margin = Cm(2.5)
-            section.bottom_margin = Cm(2.5)
-            section.left_margin = Cm(3.0)
-            section.right_margin = Cm(2.5)
-
-        style = doc.styles["Normal"]
-        style.font.name = "Arial"
-        style.font.size = Pt(11)
-
-        fecha_hoy = datetime.now().strftime("%d/%m/%Y")
-        logo_path = os.path.join(os.getcwd(), "lg1.png")
-
-        if os.path.exists(logo_path):
-            p_logo = doc.add_paragraph()
-            p_logo.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
-            r_logo = p_logo.add_run()
-            r_logo.add_picture(logo_path, width=Cm(6.5))
-            _set_paragraph_spacing(p_logo, space_before=0, space_after=4)
-
-        p_titulo = doc.add_paragraph()
-        _set_paragraph_spacing(p_titulo, space_before=0, space_after=8)
-        p_titulo.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-        run_titulo = p_titulo.add_run("INFORME TÉCNICO DE RETIRO - RESUMEN DE LOTE")
-        run_titulo.bold = True
-        run_titulo.font.size = Pt(14)
-        run_titulo.font.color.rgb = RGBColor(*MARCA_RGB)
-
-        _add_horizontal_rule(doc)
-
-        _add_campo(doc, "CLIENTE:             ", cliente.upper())
-        _add_campo(doc, "FECHA DE REVISIÓN:   ", fecha_hoy)
-        _add_campo(doc, "EQUIPOS DEFECTUOSOS: ", str(len(equipos_malos)))
-
-        _add_horizontal_rule(doc)
-        _add_titulo_seccion(
-            doc, "DETALLE DE EQUIPOS Y FALLAS", space_before=8, space_after=8
-        )
-
-        tabla = doc.add_table(rows=1, cols=4)
-        tabla.style = "Table Grid"
-
-        hdr_cells = tabla.rows[0].cells
-        hdr_cells[0].text = "GUÍA"
-        hdr_cells[1].text = "MODELO"
-        hdr_cells[2].text = "N° DE SERIE"
-        hdr_cells[3].text = "DETALLE DE FALLAS"
-
-        for cell in hdr_cells:
-            for paragraph in cell.paragraphs:
-                for run in paragraph.runs:
-                    run.bold = True
-
-        for equipo in equipos_malos:
-            guia = equipo.get("GUIA_ID", "S/N")
-            modelo = equipo.get("MODELO", "Desconocido")
-            serie = equipo.get("SERIAL", "Desconocido")
-            obs = equipo.get("OBS", "")
-
-            detalle_comps = equipo.get("DETALLE_COMPONENTES", [])
-            fallas_list = []
-            for c in detalle_comps:
-                if c["estado"] != "OK":
-                    texto = f"- {c['nombre']}: {c['estado']}"
-                    if c["obs"]:
-                        texto += f" ({c['obs']})"
-                    fallas_list.append(texto)
-
-            texto_fallas = "\n".join(fallas_list)
-            if obs and obs not in ("Sin observaciones", ""):
-                texto_fallas += f"\nOBS GENERAL: {obs}"
-
-            row_cells = tabla.add_row().cells
-            row_cells[0].text = str(guia)
-            row_cells[1].text = modelo
-            row_cells[2].text = serie
-            row_cells[3].text = texto_fallas
-
-        _add_titulo_seccion(doc, "CONCLUSIÓN:", space_before=15, space_after=4)
-        p_conclu = doc.add_paragraph()
-        p_conclu.add_run(
-            "Los equipos listados en la tabla superior presentan fallas físicas o de hardware. "
-            "Se requiere revisión detallada, cambio de componentes afectados o envío a bodega "
-            "a la espera de repuestos o reparación."
-        )
-
-        for _ in range(3):
-            doc.add_paragraph()
-
-        _add_horizontal_rule(doc)
-        p_firma = doc.add_paragraph()
-        run_f1 = p_firma.add_run("TÉCNICO ENCARGADO: ")
-        run_f1.bold = True
-        run_f2 = p_firma.add_run("TOMAS GAC\n")
-        run_f2.bold = True
-        run_r1 = p_firma.add_run("RUT: ")
-        run_r1.bold = True
-        p_firma.add_run("21.790.634-2")
-
-        fecha_str = datetime.now().strftime("%Y%m%d")
-        id_part = f"_{id_lote}" if id_lote and id_lote != "SN" else ""
-        nombre_archivo = f"Informe_Tecnico_{cliente}{id_part}_{fecha_str}.docx"
-        ruta_guardado = _ruta_no_pisar(os.path.join(ruta_cliente, nombre_archivo))
-        doc.save(ruta_guardado)
-
-    except Exception as e:
-        print(f"Error generando Word: {e}")
-        messagebox.showerror("Error al generar Word", str(e))
-
-
-# ============================================================================
-# 6. SCANNER (ejecución y parseo)
+# 5. SCANNER (ejecución y parseo)
 # ----------------------------------------------------------------------------
 # Corre PS_SCRIPT (sección 3) con reintentos/timeout y devuelve el dict `data`
 # usado por todo el resto (formulario, guardado, HTML).
@@ -1254,7 +1072,7 @@ def get_inventory_fast(max_retries=3, timeout_per_attempt=45):
 
 
 # ============================================================================
-# 7. PERSISTENCIA — MODELO DE LOTES POR OT / GUÍA
+# 6. PERSISTENCIA — MODELO DE LOTES POR OT / GUÍA
 # ----------------------------------------------------------------------------
 # Un LOTE es (cliente, movimiento, número de documento) y vive en su propia
 # carpeta desde el PRIMER escaneo, no al final:
@@ -1657,10 +1475,6 @@ def regenerar_lote(lote):
     Al ser derivados y no incrementales, el fusionado siempre sale completo
     (aunque la OT se haya trabajado en varios días) y sin duplicados.
     Devuelve el total de equipos.
-
-    NO toca el informe Word de fallas: ese lo escribe cerrar_lote() y solo al
-    cerrar. Correr esto sobre una OT de retiro con equipos malos deja el .docx
-    como estaba (ver sección 5).
     """
     equipos = leer_equipos_lote(lote)
     cfg = _MOV_CFG[lote["mov"]]
@@ -1927,8 +1741,8 @@ def accion_agregar_lote(
 def _ruta_no_pisar(ruta):
     """
     Devuelve una ruta que NO exista aún: si el archivo ya está, agrega
-    ' (2)', ' (3)'… antes de la extensión. Evita sobrescribir un HTML,
-    FUSIONADO o Word de un lote anterior del mismo cliente/día.
+    ' (2)', ' (3)'… antes de la extensión. Evita sobrescribir un HTML o
+    FUSIONADO de un lote anterior del mismo cliente/día.
     """
     if not os.path.exists(ruta):
         return ruta
@@ -2009,18 +1823,12 @@ def _resumen_fusionado(eq):
 def cerrar_lote(lote):
     """
     Finaliza una OT/guía: regenera el fusionado con TODO lo escaneado (aunque
-    se haya trabajado en varios días), emite el informe Word si hay equipos con
-    fallas y escribe el marcador '.cerrado'.
-
-    Este es el ÚNICO punto del flujo normal que produce el .docx, y solo para
-    los RETIROS: en una entrega equipos_malos queda vacío a propósito, porque
-    el formulario ni siquiera muestra el panel de componentes. Cerrar dos veces
-    (reabrir, sumar equipos y volver a cerrar) no pisa el informe anterior:
-    _ruta_no_pisar le agrega ' (2)', así que el archivo con el nombre original
-    conserva los datos del primer cierre.
+    se haya trabajado en varios días) y escribe el marcador '.cerrado'.
 
     No mueve ni renombra nada: los equipos viven en la carpeta de la OT desde
-    el primer escaneo. Devuelve (total_equipos, equipos_malos).
+    el primer escaneo. Devuelve (total_equipos, equipos_malos): en una entrega
+    equipos_malos queda vacío a propósito, porque el formulario ni siquiera
+    muestra el panel de componentes.
     """
     # Hay que preguntarlo ANTES de marcar: cargar_lote_activo() descarta los
     # lotes cerrados, así que después del marcador siempre daría "no es activo"
@@ -2035,10 +1843,6 @@ def cerrar_lote(lote):
         if lote["mov"] == "Retiro"
         else []
     )
-    if equipos_malos:
-        generar_informe_word(
-            lote["cliente"], equipos_malos, lote["ruta"], lote["numero"]
-        )
 
     marcar_cerrado(lote, total)
     if era_activo:
@@ -2214,18 +2018,9 @@ def dialogo_nuevo_lote(ventana, mov_sugerido="Entrega"):
     frame_bts = tk.Frame(win, bg=COLORS["fondo"])
     frame_bts.pack(pady=16)
     boton_accion(frame_bts, "✅ Usar esta OT", confirmar).pack(side="left", padx=6)
-    tk.Button(
-        frame_bts,
-        text="Cancelar",
-        command=win.destroy,
-        bg=COLORS["gris"],
-        fg="white",
-        font=fuente(10, True),
-        padx=14,
-        pady=7,
-        cursor="hand2",
-        relief="flat",
-    ).pack(side="left", padx=6)
+    boton_accion(frame_bts, "Cancelar", win.destroy, COLORS["gris"]).pack(
+        side="left", padx=6
+    )
 
     win.wait_window()
     return resultado["lote"]
@@ -2251,7 +2046,9 @@ def dialogo_elegir_lote(ventana, titulo, texto_boton):
     titulo_ui(win, titulo, size=12, pady=(16, 6))
 
     cols = ("cliente", "lote", "equipos", "modificado")
-    tree = ttk.Treeview(win, columns=cols, show="headings", height=10)
+    tree = ttk.Treeview(
+        win, columns=cols, show="headings", height=10, style="Audit.Treeview"
+    )
     for c, txt, w in (
         ("cliente", "Cliente", 180),
         ("lote", "OT / Guía", 130),
@@ -2292,18 +2089,9 @@ def dialogo_elegir_lote(ventana, titulo, texto_boton):
     frame_bts = tk.Frame(win, bg=COLORS["fondo"])
     frame_bts.pack(pady=12)
     boton_accion(frame_bts, texto_boton, confirmar).pack(side="left", padx=6)
-    tk.Button(
-        frame_bts,
-        text="Cancelar",
-        command=win.destroy,
-        bg=COLORS["gris"],
-        fg="white",
-        font=fuente(10, True),
-        padx=14,
-        pady=7,
-        cursor="hand2",
-        relief="flat",
-    ).pack(side="left", padx=6)
+    boton_accion(frame_bts, "Cancelar", win.destroy, COLORS["gris"]).pack(
+        side="left", padx=6
+    )
 
     win.wait_window()
     return resultado["lote"]
@@ -2384,10 +2172,7 @@ def accion_cerrar_lote(ventana):
 
     extra = ""
     if equipos_malos:
-        extra = (
-            f"\n\n📄 Informe técnico generado con {len(equipos_malos)} "
-            "equipo(s) defectuoso(s)."
-        )
+        extra = f"\n\n⚠️ {len(equipos_malos)} equipo(s) quedaron con fallas registradas."
     if ruta_bk:
         extra += f"\n\n🗄️ Backup: {os.path.basename(ruta_bk)}"
     messagebox.showinfo(
@@ -2403,26 +2188,26 @@ def accion_cerrar_lote(ventana):
 #  ENVÍO POR SCP (SSH)
 #
 #  Sube al servidor solo lo que es fuente de verdad o entregable —JSON
-#  individuales, JSON FUSIONADO, informe Word y el marcador '.cerrado'—
+#  individuales, JSON FUSIONADO y el marcador '.cerrado'—
 #  replicando el árbol <GRUPO>/<CLIENTE>/<OT>. El HTML se deja fuera a
 #  propósito: es un derivado pesado que allá se rearma desde los JSON con
 #  "RECONSTRUIR DESDE JSONs", idéntico y con todas sus funcionalidades.
 # ─────────────────────────────────────────────────────────
 
-# Extensiones/archivos que SÍ viajan. Todo lo demás (HTML, .enviado, .lote_activo,
-# temporales de Office) se queda en la máquina.
-_SCP_EXTENSIONES = (".json", ".docx")
+# Extensiones/archivos que SÍ viajan. Todo lo demás (HTML, .enviado,
+# .lote_activo) se queda en la máquina.
+_SCP_EXTENSIONES = (".json",)
 
 
 def archivos_a_enviar(ruta_ot):
     """
     Archivos de una OT que deben subir al servidor, ya ordenados.
 
-    Se envían los JSON (individuales + FUSIONADO), el Word de fallas y los
-    marcadores de estado '.cerrado' y '.lote' (este último trae el número de
-    documento que la ruta no codifica y sin él la OT se reconstruye sin su
-    guía/OT secundaria). Quedan fuera el HTML —derivado, se rearma allá— y
-    '.enviado', que es control local de sincronización.
+    Se envían los JSON (individuales + FUSIONADO) y los marcadores de estado
+    '.cerrado' y '.lote' (este último trae el número de documento que la ruta
+    no codifica y sin él la OT se reconstruye sin su guía/OT secundaria).
+    Quedan fuera el HTML —derivado, se rearma allá— y '.enviado', que es
+    control local de sincronización.
     """
     archivos = []
     try:
@@ -2437,8 +2222,6 @@ def archivos_a_enviar(ruta_ot):
             continue
         if nombre in (_MARCADOR_CERRADO, _ARCHIVO_META_LOTE):
             archivos.append(ruta)
-            continue
-        if nombre.startswith("~$"):  # temporales de Word
             continue
         if nombre.lower().endswith(_SCP_EXTENSIONES):
             archivos.append(ruta)
@@ -2939,7 +2722,7 @@ def accion_enviar_red(ventana):
         "Confirmar Envío",
         f"¿Enviar {len(pendientes)} carpeta(s) de OT al servidor por SCP?\n\n"
         f"Destino: {SCP_USUARIO}@{SCP_HOST}:{SCP_DESTINO}\n"
-        f"Archivos: {total_archivos} (JSON individuales, FUSIONADO, Word y "
+        f"Archivos: {total_archivos} (JSON individuales, FUSIONADO y "
         f"marcadores).\n\n"
         f"El HTML no se sube: se reconstruye desde los JSON en destino."
         f"{aviso_abiertas}",
@@ -3253,7 +3036,7 @@ def fog_cancelar_sesion_multicast(sesion_id):
 
 
 # ============================================================================
-# 8. RECONSTRUCCIÓN / MERGE — rearmar el HTML a partir de los JSON guardados
+# 7. RECONSTRUCCIÓN / MERGE — rearmar el HTML a partir de los JSON guardados
 # ============================================================================
 def _es_html(valor):
     """True si el valor ya viene renderizado como filas de tabla."""
@@ -3485,10 +3268,6 @@ def _reconstruir_carpeta_suelta(carpeta):
     HTML_START/HTML_END (copiar filas, CSV, fusionado, etiquetas), cada equipo
     con su data-comps y data-fusion, y un <title> con el cliente real para que
     las descargas salgan con el nombre correcto.
-
-    A diferencia de regenerar_lote(), acá SÍ se escribe el informe Word cuando
-    el grupo es de retiros y hay equipos con fallas: la carpeta suelta no pasó
-    nunca por cerrar_lote(), así que el .docx no existe y hay que producirlo.
     """
     equipos_por_tipo = {"Entregas": [], "Retiros": []}
     errores = []
@@ -3564,19 +3343,6 @@ def _reconstruir_carpeta_suelta(carpeta):
             )
         generados.append(base + "_FUSIONADO.json")
 
-        # Retiros con fallas: el Word es un entregable, no un derivado visual.
-        malos = [e for e in equipos if e.get("TIENE_FALLAS")]
-        if tipo == "Retiros" and malos and DOCX_AVAILABLE:
-            try:
-                generar_informe_word(
-                    _cliente_dominante(equipos) or nombre_carpeta,
-                    malos,
-                    carpeta,
-                    nombre_carpeta,
-                )
-            except Exception as e:
-                errores.append(f"Informe Word: {e}")
-
         total += len(entries)
 
     return generados, total, errores
@@ -3590,9 +3356,6 @@ def accion_unir_Json(ventana):
     Si la carpeta pertenece al árbol de reportes se regenera el lote CANÓNICO
     (mismo HTML y mismo FUSIONADO que produce el escaneo, sin archivos sueltos);
     si es una carpeta cualquiera, se escribe un '_RECONSTRUIDO.html' aparte.
-
-    Las dos ramas difieren en el informe Word: la de carpeta suelta lo genera,
-    la canónica no (el .docx de una OT es cosa de cerrar_lote, sección 5).
     """
     carpeta = filedialog.askdirectory(
         title="Selecciona la carpeta a reconstruir (OT, cliente o grupo)",
@@ -3666,7 +3429,7 @@ def accion_unir_Json(ventana):
 
 
 # ============================================================================
-# 9. MÓDULOS (ventanas Toplevel) — etiquetas manuales, transformadores,
+# 8. MÓDULOS (ventanas Toplevel) — etiquetas manuales, transformadores,
 #    panel de clonación y cambio de nombre del equipo.
 # ============================================================================
 def abrir_modulo_etiquetas_manual(ventana_padre):
@@ -3830,17 +3593,9 @@ def abrir_modulo_etiquetas_manual(ventana_padre):
         # como nombre de host y la etiqueta no abre.
         webbrowser.open(Path(temp_path).as_uri())
 
-    tk.Button(
-        win,
-        text="🖨️ GENERAR E IMPRIMIR ETIQUETA",
-        command=generar_y_imprimir,
-        bg="#0078d4",
-        fg="white",
-        font=("Segoe UI", 10, "bold"),
-        padx=20,
-        pady=8,
-        cursor="hand2",
-        relief="flat"
+    boton_accion(
+        win, "🖨️ GENERAR E IMPRIMIR ETIQUETA", generar_y_imprimir,
+        COLORS["azul_btn"], padx=20, pady=8,
     ).pack(pady=10)
 
 
@@ -3947,7 +3702,7 @@ def abrir_modulo_agregar_transformador(ventana_padre):
     for i, (ruta, jdata) in enumerate(registros, start=1):
         data = jdata.get("DATA", {})
         actual = jdata.get("SN_Transf", _TRANSF_PENDIENTE) or _TRANSF_PENDIENTE
-        fondo = COLORS["fondo"] if i % 2 else "#e3e9f2"
+        fondo = COLORS["fondo"] if i % 2 else _ajustar_color(COLORS["fondo"], -0.04)
 
         for col, txt in (
             (0, str(i)),
@@ -4144,17 +3899,8 @@ def abrir_modulo_agregar_transformador(ventana_padre):
         ("💾 GUARDAR", guardar, COLORS["verde"]),
         ("Cancelar", win.destroy, COLORS["gris"]),
     ):
-        tk.Button(
-            barra_bts,
-            text=txt,
-            command=cmd,
-            bg=color,
-            fg="white",
-            font=fuente(9, True),
-            padx=14,
-            pady=7,
-            cursor="hand2",
-            relief="flat",
+        boton_accion(
+            barra_bts, txt, cmd, color, padx=14, font=fuente(9, True)
         ).pack(side="left", padx=5)
 
     refrescar_estado()
@@ -4602,7 +4348,7 @@ def abrir_modulo_cambiar_nombre(ventana_padre):
 #  Navegación e Interfaz Principal
 # ─────────────────────────────────────────────────────────
 # ============================================================================
-# 10. UI PRINCIPAL — navegación en la ventana raíz: menú, pantalla de escaneo
+# 9. UI PRINCIPAL — navegación en la ventana raíz: menú, pantalla de escaneo
 #     y formulario de registro.
 # ============================================================================
 def limpiar_ventana(ventana):
@@ -4728,17 +4474,9 @@ def mostrar_menu_principal(ventana):
             (3, 0),
         ),
     ):
-        tk.Button(
-            frame_ot,
-            text=texto,
-            command=comando,
-            bg=COLORS["celeste"],
-            fg="white",
-            font=fuente(10, True),
-            pady=8,
-            cursor="hand2",
-            relief="flat",
-        ).pack(side="left", fill="x", expand=True, padx=lado)
+        boton_accion(frame_ot, texto, comando, COLORS["celeste"], pady=8).pack(
+            side="left", fill="x", expand=True, padx=lado
+        )
 
     boton_menu(
         frame_btns,
@@ -4849,7 +4587,7 @@ def construir_ui_formulario(ventana, data, lote):
     top_frame = tk.Frame(ventana, bg=COLORS["fondo"])
     top_frame.pack(fill="x", pady=(14, 4), padx=30)
 
-    tk.Button(
+    btn_volver = tk.Button(
         top_frame,
         text="⬅ Volver",
         command=lambda: mostrar_menu_principal(ventana),
@@ -4858,8 +4596,11 @@ def construir_ui_formulario(ventana, data, lote):
         font=("Segoe UI", 9, "bold"),
         cursor="hand2",
         relief="flat",
+        bd=0,
         padx=10,
-    ).pack(side="left")
+    )
+    btn_volver.pack(side="left")
+    _con_hover(btn_volver, "#cbd5e1", _ajustar_color("#cbd5e1", -0.10))
     tk.Label(
         top_frame,
         text="💻 Asistente de Entrega / Retiro",
@@ -4879,8 +4620,14 @@ def construir_ui_formulario(ventana, data, lote):
         pady=6,
     ).pack()
 
-    marco = tk.Frame(ventana, bg=COLORS["fondo"])
-    marco.pack(pady=10, fill="x", padx=30)
+    # El botón de guardar se reserva abajo ANTES de armar el contenido del
+    # medio: así queda siempre visible y es el contenido (la grilla de
+    # componentes, sobre todo) el que scrollea si no entra en la ventana.
+    frame_bts = tk.Frame(ventana, bg=COLORS["fondo"])
+    frame_bts.pack(side="bottom", pady=10)
+
+    contenedor_marco, marco, _ = marco_scrolleable(ventana)
+    contenedor_marco.pack(fill="both", expand=True, padx=30, pady=(10, 0))
 
     # El movimiento y el número ya no se eligen por equipo: los define la OT
     # activa. Se muestran fijos para que siempre sea evidente dónde va a caer
@@ -5033,13 +4780,10 @@ def construir_ui_formulario(ventana, data, lote):
     )
     entry_office.pack(fill="x", ipady=4, pady=6)
 
-    frame_bts = tk.Frame(ventana, bg=COLORS["fondo"])
-    frame_bts.pack(pady=10)
-
-    tk.Button(
+    boton_accion(
         frame_bts,
-        text=f"💾 GUARDAR EN {carpeta_lote(lote['mov'], lote['numero'])}",
-        command=lambda: accion_agregar_lote(
+        f"💾 GUARDAR EN {carpeta_lote(lote['mov'], lote['numero'])}",
+        lambda: accion_agregar_lote(
             ventana,
             lote,
             data,
@@ -5049,18 +4793,15 @@ def construir_ui_formulario(ventana, data, lote):
             combo_ver.get(),
             comps_data,
         ),
-        bg="#0078d4",
-        fg="white",
-        font=("Segoe UI", 12, "bold"),
+        COLORS["azul_btn"],
         padx=20,
         pady=10,
-        cursor="hand2",
-        relief="flat",
+        font=("Segoe UI", 12, "bold"),
     ).pack()
 
 
 # ============================================================================
-# 11. MODO CLONACIÓN (sin menú) — para el post-script de FOG
+# 10. MODO CLONACIÓN (sin menú) — para el post-script de FOG
 # ----------------------------------------------------------------------------
 # Se invoca como:  REPORTE3.exe --clonacion [--sin-ui]
 #
@@ -5102,9 +4843,13 @@ def _hay_consola():
 def _observaciones_consola(data, lote):
     """
     La ventana de observaciones, pero en la consola. Mismo contrato que
-    _ventana_observaciones: devuelve (observaciones, tiene_fallas, enviar), y
-    todo esto pasa ANTES del SCP. Espera a que el operador conteste, sin envío
-    automático por tiempo.
+    _ventana_observaciones: devuelve (observaciones, detalle_componentes,
+    enviar), y todo esto pasa ANTES del SCP. Espera a que el operador
+    conteste, sin envío automático por tiempo.
+
+    Sin consola no tiene sentido pedir componente por componente como en la
+    ventana: si hay fallas, quedan anotadas en un único ítem "Estado general"
+    con la observación que dé el operador.
     """
     print("")
     print("=" * 64)
@@ -5124,16 +4869,24 @@ def _observaciones_consola(data, lote):
     try:
         obs = input("Observaciones (Enter = ninguna): ").strip()
         resp = input("¿El equipo tiene fallas? [s/N]: ").strip()
-        return obs, resp.lower().startswith("s"), True
+        tiene_fallas = resp.lower().startswith("s")
+        componentes = (
+            [{"nombre": "Estado general", "estado": "MALO", "obs": obs}]
+            if tiene_fallas
+            else []
+        )
+        return obs, componentes, True
     except KeyboardInterrupt:
         print("\n[REPORTE3] Cancelado por el operador.", flush=True)
-        return "", False, False
+        return "", [], False
 
 
 def _ventana_observaciones(data, lote):
     """
-    Ventana única del modo clonación: muestra lo escaneado y toma las
-    observaciones. Devuelve (observaciones, tiene_fallas, enviar).
+    Ventana única del modo clonación: muestra lo escaneado y toma la misma
+    revisión de componentes que la ventana de retiro (pantalla, teclado,
+    placa base, etc.), para que esa información quede lista al armar la
+    etiqueta del equipo. Devuelve (observaciones, detalle_componentes, enviar).
 
     'enviar' sale en False solo si el operador cancela a propósito; si la
     ventana se cierra con la X se manda igual, porque el costo de perder el
@@ -5141,13 +4894,15 @@ def _ventana_observaciones(data, lote):
     observaciones. No hay envío automático por tiempo: espera lo que haga
     falta a que el operador decida.
     """
-    resultado = {"obs": "", "fallas": False, "enviar": True}
+    resultado = {"obs": "", "componentes": [], "enviar": True}
 
     win = tk.Tk()
     win.title(f"Registro de equipo — {etiqueta_lote(lote)}")
     win.configure(bg=COLORS["fondo"])
     win.attributes("-topmost", True)
-    win.geometry("560x460")
+    win.geometry("700x620")
+    win.resizable(True, True)
+    win.minsize(620, 420)
 
     titulo_ui(win, "🖥️ Equipo escaneado", size=14, pady=(16, 4))
     tk.Label(
@@ -5159,8 +4914,18 @@ def _ventana_observaciones(data, lote):
         pady=6,
     ).pack(fill="x", padx=24, pady=(0, 10))
 
-    marco = tk.Frame(win, bg="white", relief="flat", bd=1)
-    marco.pack(fill="x", padx=24)
+    # El botón de enviar se reserva abajo ANTES de armar el contenido del
+    # medio: así queda siempre visible y es la grilla de componentes la que
+    # scrollea si no entra entera en la ventana.
+    frame_btn = tk.Frame(win, bg=COLORS["fondo"])
+    frame_btn.pack(side="bottom", pady=10)
+
+    contenedor_medio, interior, _ = marco_scrolleable(win)
+    contenedor_medio.pack(fill="both", expand=True, padx=24)
+
+    marco = tk.Frame(interior, bg="white", highlightbackground=COLORS["borde"],
+                      highlightthickness=1, bd=0)
+    marco.pack(fill="x")
     for etiqueta, valor in (
         ("Modelo", data.get("model", "?")),
         ("N° de Serie", data.get("serial", "?")),
@@ -5178,32 +4943,101 @@ def _ventana_observaciones(data, lote):
             anchor="w", wraplength=330, justify="left",
         ).pack(side="left", fill="x", expand=True)
 
-    tk.Label(
-        win, text="Observaciones (opcional)", font=fuente(9, True),
-        bg=COLORS["fondo"], fg=COLORS["gris_oscuro"],
-    ).pack(anchor="w", padx=24, pady=(14, 2))
-    txt_obs = tk.Text(win, height=4, font=fuente(9), relief="solid", bd=1)
-    txt_obs.pack(fill="x", padx=24)
-    txt_obs.focus_set()
+    lf_fallas = ttk.LabelFrame(interior, text=" ⚠️ Revisión de Componentes ")
+    lf_fallas.pack(fill="x", pady=(14, 0))
 
-    var_fallas = tk.BooleanVar(value=False)
-    tk.Checkbutton(
-        win, text="El equipo tiene fallas", variable=var_fallas,
-        font=fuente(9), bg=COLORS["fondo"], fg="#991b1b",
-        activebackground=COLORS["fondo"], selectcolor="white",
-    ).pack(anchor="w", padx=22, pady=(6, 0))
+    componentes_etiqueta = [
+        "Carcaza",
+        "Pantalla",
+        "Teclado",
+        "Touchpad",
+        "Puertos USB",
+        "Puertos Video",
+        "Ethernet/Wi-Fi",
+        "Placa base",
+        "Memoria",
+        "Disco duro",
+        "Batería",
+    ]
+
+    comps_data = []
+
+    frame_grilla = tk.Frame(lf_fallas, bg=COLORS["fondo"])
+    frame_grilla.pack(padx=10, pady=10)
+
+    tk.Label(
+        frame_grilla, text="Componente", font=("Segoe UI", 9, "bold"), bg=COLORS["fondo"]
+    ).grid(row=0, column=0, sticky="w", padx=5)
+    tk.Label(
+        frame_grilla, text="Estado", font=("Segoe UI", 9, "bold"), bg=COLORS["fondo"]
+    ).grid(row=0, column=1, padx=5)
+    tk.Label(
+        frame_grilla,
+        text="Observación (Obligatorio si es OBS/MALO)",
+        font=("Segoe UI", 9, "bold"),
+        bg=COLORS["fondo"],
+    ).grid(row=0, column=2, sticky="w", padx=5)
+
+    for i, comp_name in enumerate(componentes_etiqueta, start=1):
+        tk.Label(frame_grilla, text=comp_name, bg=COLORS["fondo"], font=("Segoe UI", 9)).grid(
+            row=i, column=0, sticky="w", padx=5, pady=2
+        )
+
+        cmb_estado = ttk.Combobox(
+            frame_grilla,
+            values=["OK", "OBS", "MALO"],
+            width=6,
+            state="readonly",
+            font=("Segoe UI", 9),
+        )
+        cmb_estado.set("OK")
+        cmb_estado.grid(row=i, column=1, padx=5, pady=2)
+
+        ent_obs = tk.Entry(
+            frame_grilla,
+            width=40,
+            font=("Segoe UI", 9),
+            state=tk.DISABLED,
+            bg="#f1f5f9",
+        )
+        ent_obs.grid(row=i, column=2, padx=5, pady=2, sticky="w")
+
+        def toggle_entry(event, e=ent_obs, c=cmb_estado):
+            if c.get() != "OK":
+                e.config(state=tk.NORMAL, bg="#ffffff")
+                e.focus()
+            else:
+                e.delete(0, tk.END)
+                e.config(state=tk.DISABLED, bg="#f1f5f9")
+
+        cmb_estado.bind("<<ComboboxSelected>>", toggle_entry)
+
+        comps_data.append({"nombre": comp_name, "estado": cmb_estado, "obs": ent_obs})
+
+    tk.Label(
+        interior, text="Observación general (opcional)", font=fuente(9, True),
+        bg=COLORS["fondo"], fg=COLORS["gris_oscuro"],
+    ).pack(anchor="w", pady=(12, 2))
+    txt_obs = tk.Text(interior, height=3, font=fuente(9), relief="solid", bd=1)
+    txt_obs.pack(fill="x", pady=(0, 12))
+    txt_obs.focus_set()
 
     def terminar(enviar=True):
         resultado["obs"] = txt_obs.get("1.0", "end").strip().upper()
-        resultado["fallas"] = var_fallas.get()
+        resultado["componentes"] = [
+            {
+                "nombre": c["nombre"],
+                "estado": c["estado"].get(),
+                "obs": c["obs"].get().strip(),
+            }
+            for c in comps_data
+        ]
         resultado["enviar"] = enviar
         try:
             win.destroy()
         except Exception:
             pass
 
-    frame_btn = tk.Frame(win, bg=COLORS["fondo"])
-    frame_btn.pack(pady=10)
     boton_accion(frame_btn, "✅ ENVIAR AL SERVIDOR", lambda: terminar(True),
                  COLORS["verde"]).pack(side="left", padx=6)
     boton_accion(frame_btn, "Cancelar", lambda: terminar(False),
@@ -5213,7 +5047,7 @@ def _ventana_observaciones(data, lote):
     win.protocol("WM_DELETE_WINDOW", lambda: terminar(True))
 
     win.mainloop()
-    return resultado["obs"], resultado["fallas"], resultado["enviar"]
+    return resultado["obs"], resultado["componentes"], resultado["enviar"]
 
 
 def modo_clonacion(sin_ui=False):
@@ -5260,12 +5094,12 @@ def modo_clonacion(sin_ui=False):
         _log_clon(f"Equipo: {data.get('model')} / {data.get('serial')}")
 
         if sin_ui and _hay_consola():
-            obs, tiene_fallas, enviar = _observaciones_consola(data, lote)
+            obs, detalle_componentes, enviar = _observaciones_consola(data, lote)
         elif sin_ui:
             _log_clon("Sin UI y sin consola: se envía sin observaciones.")
-            obs, tiene_fallas, enviar = "", False, True
+            obs, detalle_componentes, enviar = "", [], True
         else:
-            obs, tiene_fallas, enviar = _ventana_observaciones(data, lote)
+            obs, detalle_componentes, enviar = _ventana_observaciones(data, lote)
         if not enviar:
             _log_clon("Cancelado por el operador.")
             return 1
@@ -5273,9 +5107,7 @@ def modo_clonacion(sin_ui=False):
         # Se guarda con la misma función que el flujo normal: el JSON queda
         # idéntico al de un escaneo manual, así el panel y la reconstrucción
         # no tienen que distinguir de dónde vino.
-        comps = [{"nombre": "Estado general", "estado": "MALO" if tiene_fallas else "OK",
-                  "obs": obs}] if tiene_fallas else []
-        guardar_equipo_general(lote, data, obs, False, "", "", comps)
+        guardar_equipo_general(lote, data, obs, False, "", "", detalle_componentes)
         ruta_json = ruta_json_equipo(lote, data["serial"])
         _log_clon(f"JSON local: {ruta_json}")
 
@@ -5419,7 +5251,7 @@ def _avisar_ok_clonacion(data, lote):
 
 
 # ============================================================================
-# 12. ENTRYPOINT
+# 11. ENTRYPOINT
 # ============================================================================
 def _ocultar_consola():
     """
@@ -5441,23 +5273,40 @@ def iniciar_interfaz_principal():
     _ocultar_consola()
     ventana = tk.Tk()
     ventana.title("Asistente de Entrega — Arrienda.cl")
-    ventana.resizable(False, False)
+    # Antes la ventana no se podía redimensionar: cualquier pantalla con
+    # mucho contenido (la grilla de componentes, por ejemplo) quedaba
+    # atrapada en el tamaño con el que se diseñó. Ahora es redimensionable,
+    # con un mínimo que sigue garantizando que se vea todo lo esencial.
+    ventana.resizable(True, True)
+    ventana.minsize(700, 600)
     ventana.attributes("-topmost", True)
     ventana.configure(bg=COLORS["fondo"])
 
     style = ttk.Style()
     style.theme_use("clam")
     style.configure(
-        "TCombobox", fieldbackground="#fff", background="#fff", font=("Segoe UI", 9)
+        "TCombobox",
+        fieldbackground="#fff",
+        background="#fff",
+        bordercolor=COLORS["borde"],
+        font=("Segoe UI", 9),
     )
-    style.configure("TEntry", fieldbackground="#fff", font=("Segoe UI", 9))
-    style.configure("TLabelframe", background="#eef2f7")
+    style.configure(
+        "TEntry", fieldbackground="#fff", bordercolor=COLORS["borde"], font=("Segoe UI", 9)
+    )
+    style.configure("TLabelframe", background=COLORS["fondo"], bordercolor=COLORS["borde"])
     style.configure(
         "TLabelframe.Label",
-        background="#eef2f7",
+        background=COLORS["fondo"],
         font=("Segoe UI", 10, "bold"),
-        foreground="#334155",
+        foreground=COLORS["gris_oscuro"],
     )
+    style.configure("TSeparator", background=COLORS["borde"])
+    # Mismo estilo de tabla en cualquier ventana que use un Treeview (panel de
+    # clonación, elegir OT), configurado acá y no recién al abrir ese panel,
+    # para que se vea igual sin importar cuál se abre primero.
+    style.configure("Audit.Treeview", rowheight=24, font=fuente(9))
+    style.configure("Audit.Treeview.Heading", font=fuente(9, True))
 
     mostrar_menu_principal(ventana)
     ventana.mainloop()

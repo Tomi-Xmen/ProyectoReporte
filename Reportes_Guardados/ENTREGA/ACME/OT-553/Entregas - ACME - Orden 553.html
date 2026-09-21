@@ -182,10 +182,11 @@ function filasValida(d){
     filas.push([lbl, dk.desc, dk.serial, ""]);
   });
 
-  /* Sin 'Key:' no hay nada que cargar: la fila de Office existe en el HTML
-     aunque SN_APP esté PENDIENTE (ver construir_entry_html), y exportarla daría
-     una fila con la serie en blanco. */
-  if(d.office && d.office.includes('Key:')){
+  /* d.office solo existe si tiene_office fue true al cargar el equipo (ver
+     construir_entry_html): si el registro no llevaba Office, esta fila no
+     entra. La key puede faltar (SN_APP="PENDIENTE") y aun así el equipo
+     lleva Office, así que la fila se exporta igual, con la serie en blanco. */
+  if(d.office){
     let ver=(d.office.match(/Office\s+([A-Za-z0-9]+)/)||[])[1]||"2016";
     let key=(d.office.match(/Key:\s*([^)]+)/)||[])[1]||"";
     filas.push([`OFFICE ${ver}`, "HOME AND BUSINESS", key.trim(), ""]);
@@ -193,15 +194,24 @@ function filasValida(d){
 
   /* El transformador va sin nombre: en Valida se carga como accesorio y con la
      descripción alcanza. */
-  if(d.transf) filas.push(["", "TRANSFORMADOR ORIGINAL HP", d.transf, ""]); }
+  if(d.transf) filas.push(["", "TRANSFORMADOR C/ADAPTADOR 45 W PUNTA FINA", d.transf, ""]);
+
+  return filas;
+}
 
 function copiarFilas(){
   let txt="";
+  let filasTransf=[];
   document.querySelectorAll('details').forEach(eq=>{
     /* Al portapapeles van solo las 3 primeras columnas: la obs ya viaja dentro
-       de specs y la cuarta es para el CSV. */
-    filasValida(extraerDatos(eq)).forEach(f=>{ txt+=f.slice(0,3).join("\t")+"\n" });
+       de specs y la cuarta es para el CSV. Los transformadores se juntan aparte
+       para pegarlos todos al final, uno debajo del otro. */
+    filasValida(extraerDatos(eq)).forEach(f=>{
+      if(f[1]==="TRANSFORMADOR C/ADAPTADOR 45 W PUNTA FINA") filasTransf.push(f);
+      else txt+=f.slice(0,3).join("\t")+"\n";
+    });
   });
+  filasTransf.forEach(f=>{ txt+=f.slice(0,3).join("\t")+"\n" });
 
   if(!txt){ alert("No hay equipos en el reporte para copiar."); return; }
 

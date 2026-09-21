@@ -5315,6 +5315,19 @@ def _avisar_error_clonacion(titulo, detalle):
         pass
 
 
+
+def _serial(valor):
+
+return str(valor or "").strip()
+    
+def son_el_mismo_lote(a,b):
+    return os.path.normcase(a["ruta"]) == os.path.normacase(b["ruta"])
+
+def reetiquetar_equipo(jdata,destino):
+    num_ot, num_guia = numeros_lote(destino)
+    jdata
+
+
 def _avisar_ok_clonacion(data, lote):
     if _SIN_UI:
         return

@@ -304,8 +304,20 @@ def treeview_auditoria(win, cols_spec, height):
     style.configure("Audit.Treeview.Heading", font=fuente(9, True))
 
     cols = tuple(c[0] for c in cols_spec)
+    # frame_tree tiene que ser el padre REAL de tree/sb (no solo el destino
+    # del pack vía in_=): si se crean como hijos de 'win' y solo se ubican
+    # geométricamente dentro de frame_tree, el frame -creado después- queda
+    # por encima en el orden de apilamiento y tapa la tabla por completo
+    # (se ve en blanco aunque las filas sí se insertaron).
+    frame_tree = tk.Frame(win, bg=COLORS["fondo"])
+    frame_tree.pack(fill="both", expand=True, padx=20, pady=8)
+
     tree = ttk.Treeview(
-        win, columns=cols, show="headings", height=height, style="Audit.Treeview"
+        frame_tree,
+        columns=cols,
+        show="headings",
+        height=height,
+        style="Audit.Treeview",
     )
     for col, w, txt in cols_spec:
         tree.heading(col, text=txt)
@@ -317,12 +329,10 @@ def treeview_auditoria(win, cols_spec, height):
     tree.tag_configure("falta", foreground="#dc2626", background="#fee2e2")
     tree.tag_configure("sobra", foreground="#d97706", background="#fef3c7")
 
-    sb = ttk.Scrollbar(win, orient="vertical", command=tree.yview)
+    sb = ttk.Scrollbar(frame_tree, orient="vertical", command=tree.yview)
     tree.configure(yscrollcommand=sb.set)
-    frame_tree = tk.Frame(win, bg=COLORS["fondo"])
-    frame_tree.pack(fill="both", expand=True, padx=20, pady=8)
-    tree.pack(side="left", fill="both", expand=True, in_=frame_tree)
-    sb.pack(side="right", fill="y", in_=frame_tree)
+    tree.pack(side="left", fill="both", expand=True)
+    sb.pack(side="right", fill="y")
     return tree
 
 # ============================================================================
@@ -1583,6 +1593,48 @@ def migrar_legacy_a_lote(rutas, lote):
     regenerar_lote(lote)
     return migrados
 
+def _serial(valor):
+
+    return str(valor or "").strip()
+    
+def son_el_mismo_lote(a,b):
+    return os.path.normcase(a["ruta"]) == os.path.normcase(b["ruta"])
+
+def reetiquetar_equipo(jdata,destino):
+    num_ot, num_guia = numeros_lote(destino)
+    jdata["CLIENTE"] = destino["cliente"]
+    jdata["TIPO_MOVIMIENTO"] = destino["mov"]
+    jdata["GUIA_ID"] = num_guia
+    jdata["OT_ID"] = num_ot
+
+def reasignar_json(jdata,ruta_origen,destino):
+    reetiquetar_equipo(jdata,destino)
+    ruta_destino = ruta_json_equipo(destino, jdata.get("SERIAL",""))
+    with open(ruta_destino, "w", encoding="utf-8") as f:
+        json.dump(jdata,f,ensure_ascii=False, indent=4)
+    try:
+        os.remove(ruta_origen)
+    except Exception:
+        pass
+
+def mover_equipos_a_lote(origen,seriales,destino):
+    if son_el_mismo_lote(origen,destino):
+        return 0
+    buscados = {_serial(s)for s in seriales}
+    os.makedirs(destino["ruta"], exist_ok=True)
+    guardar_meta_lote(destino)
+    
+    movidos = 0
+    for ruta_origen, jdata in leer_equipos_lote_con_ruta(origen):
+        if _serial(jdata.get("SERIAL")) in buscados:
+            reasignar_json(jdata,ruta_origen,destino)
+            movidos += 1
+    if movidos:
+        for lote in (origen,destino):
+            marcar_pendiente_envio(lote)
+            regenerar_lote(lote)
+    return movidos
+
 
 def buscar_serial_en_abiertos(serial, excluir_ruta=None):
     """
@@ -1705,6 +1757,85 @@ def guardar_equipo_general(
         "ESCANEADO": datetime.now().isoformat(timespec="seconds"),
     }
     return guardar_registro_en_lote(lote, registro)
+
+
+def _tabla_equipos(win,registros):
+    tabla = treeview_auditoria(
+        win, [("modelo",320,"Modelo"),("serial",200,"Serial")], height=12
+    )
+    for i, jdata in enumerate(registros):
+        tabla.insert(
+            "","end", iid=str(i),
+            values=(jdata.get("MODELO","?"), jdata.get("SERIAL","?")),
+        )
+    return tabla
+
+def abrir_modulo_mover_ot(ventana):
+    origen = cargar_lote_activo()
+    if not origen:
+        messagebox.showwarning(
+        "Sin OT Activa",
+        "activa la ot para poder mover equpos",
+        parent=ventana,
+    )
+        return
+
+    registros = leer_equipos_lote(origen)
+    if not registros:
+        messagebox.showwarning(
+        "OT sin equipos",
+        f"{etiqueta_lote(origen)} no tiene equipos para mover.",
+        parent=ventana,
+    )
+        return
+
+    win = ventana_modal(ventana, "Mover equipos a otra OT", "640x560")
+    titulo_ui(win, "↔️ Mover equipos a otra OT", size=13, pady=(16, 4))
+    tk.Label(
+        win,
+        text=f"Origen: {etiqueta_lote(origen)}  ·  {len(registros)} equipo(s)\n"
+        "Marca los equipos y elige la OT destino (Ctrl/Shift para varios).",
+        font=fuente(9),
+        bg=COLORS["fondo"],
+        fg=COLORS["gris"],
+        justify="center",
+    ).pack(pady=(0, 6))
+    tabla = _tabla_equipos(win, registros)
+    
+    def al_mover():
+        # el iid de cada fila es su índice en 'registros'
+        seriales = [registros[int(iid)].get("SERIAL", "") for iid in tabla.selection()]
+        if not seriales:
+            messagebox.showinfo("Sin selección", "Marca al menos un equipo.", parent=win)
+            return
+
+        destino = dialogo_elegir_lote(win, "Mover a esta OT", "↔️ Mover aquí")
+        if not destino:
+            return
+        if son_el_mismo_lote(origen, destino):
+            messagebox.showwarning(
+                "Misma OT", "El destino es la misma OT de origen.", parent=win
+            )
+            return
+
+        movidos = mover_equipos_a_lote(origen, seriales, destino)
+        win.destroy()
+        messagebox.showinfo(
+            "✅ Movidos",
+            f"{movidos} equipo(s) pasaron a {etiqueta_lote(destino)}.\n\n"
+            "Se regeneró el HTML y el JSON FUSIONADO de ambas OT.",
+        )
+        mostrar_menu_principal(ventana)
+
+    barra = tk.Frame(win, bg=COLORS["fondo"])
+    barra.pack(pady=12)
+    boton_accion(barra, "↔️ Mover seleccionados", al_mover, COLORS["celeste"]).pack(
+        side="left", padx=6
+    )
+    boton_accion(barra, "Cancelar", win.destroy, COLORS["gris"]).pack(side="left", padx=6)
+
+
+
 
 
 def accion_agregar_lote(
@@ -4478,7 +4609,16 @@ def mostrar_menu_principal(ventana):
         boton_accion(frame_ot, texto, comando, COLORS["celeste"], pady=8).pack(
             side="left", fill="x", expand=True, padx=lado
         )
+    
+    boton_menu(
+        frame_btns,
+        "mover equipos a otra OT",
+        lambda: abrir_modulo_mover_ot(ventana),
+        COLORS["celeste"],
+        size = 10,
+    )    
 
+        
     boton_menu(
         frame_btns,
         "✅ CERRAR OT",
@@ -5314,18 +5454,6 @@ def _avisar_error_clonacion(titulo, detalle):
     except Exception:
         pass
 
-
-
-def _serial(valor):
-
-return str(valor or "").strip()
-    
-def son_el_mismo_lote(a,b):
-    return os.path.normcase(a["ruta"]) == os.path.normacase(b["ruta"])
-
-def reetiquetar_equipo(jdata,destino):
-    num_ot, num_guia = numeros_lote(destino)
-    jdata
 
 
 def _avisar_ok_clonacion(data, lote):

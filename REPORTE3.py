@@ -4146,7 +4146,7 @@ def abrir_panel_clonacion(ventana_padre):
                 tags=("ok" if marca == "esperado" else "sobra",),
             )
 
-        faltan = [s for s in esperadoe if s.upper() not in recibidos]
+        faltan = [s for s in esperados if s.upper() not in recibidos]
         for sn in faltan:
             tree.insert(
                 "", "end",
@@ -5034,10 +5034,12 @@ def _observaciones_consola(data, lote):
 def _ventana_observaciones(data, lote):
     """
     Ventana única del modo clonación: muestra lo escaneado y toma la misma
-    revisión de componentes que la ventana de retiro (pantalla, teclado,
-    placa base, etc.), para que esa información quede lista al armar la
-    etiqueta del equipo. Devuelve (observaciones, detalle_componentes, enviar,
-    tiene_office, office_key, version_office).
+    revisión de componentes que la ventana de retiro/entrega manual —solo
+    aplica en retiros (pantalla, teclado, placa base, etc.), oculta en
+    entregas—, para que esa información quede lista al armar la etiqueta
+    del equipo. La fila de Teclado tiene además un atajo a keytest.ru para
+    probarlo sin salir del flujo. Devuelve (observaciones, detalle_componentes,
+    enviar, tiene_office, office_key, version_office).
 
     'enviar' sale en False solo si el operador cancela a propósito; si la
     ventana se cierra con la X se manda igual, porque el costo de perder el
@@ -5101,8 +5103,7 @@ def _ventana_observaciones(data, lote):
             anchor="w", wraplength=330, justify="left",
         ).pack(side="left", fill="x", expand=True)
 
-    lf_fallas = ttk.LabelFrame(interior, text=" ⚠️ Revisión de Componentes ")
-    lf_fallas.pack(fill="x", pady=(14, 0))
+    lf_fallas = ttk.LabelFrame(interior, text=" ⚠️ Revisión de Componentes (Solo Retiros) ")
 
     componentes_etiqueta = [
         "Carcaza",
@@ -5137,9 +5138,10 @@ def _ventana_observaciones(data, lote):
     ).grid(row=0, column=2, sticky="w", padx=5)
 
     for i, comp_name in enumerate(componentes_etiqueta, start=1):
-        tk.Label(frame_grilla, text=comp_name, bg=COLORS["fondo"], font=("Segoe UI", 9)).grid(
-            row=i, column=0, sticky="w", padx=5, pady=2
+        lbl_comp = tk.Label(
+            frame_grilla, text=comp_name, bg=COLORS["fondo"], font=("Segoe UI", 9)
         )
+        lbl_comp.grid(row=i, column=0, sticky="w", padx=5, pady=2)
 
         cmb_estado = ttk.Combobox(
             frame_grilla,
@@ -5170,7 +5172,40 @@ def _ventana_observaciones(data, lote):
 
         cmb_estado.bind("<<ComboboxSelected>>", toggle_entry)
 
+        # El teclado es el único componente con una herramienta externa de
+        # prueba a mano: keytest.ru muestra en pantalla qué tecla se apretó,
+        # así que alcanza con abrirlo y teclear un rato para ver si responde
+        # todo. Queda en verde después de abrirlo como recordatorio visual de
+        # "ya lo probé" — no cambia el Estado solo: el operador sigue
+        # eligiendo OK/OBS/MALO según lo que haya visto en la página.
+        if comp_name == "Teclado":
+            def _abrir_test_teclado(lbl=lbl_comp):
+                webbrowser.open("https://keytest.ru/old.html")
+                lbl.config(text="Teclado ✔ probado", fg="#166534", font=("Segoe UI", 9, "bold"))
+
+            tk.Button(
+                frame_grilla,
+                text="⌨️ Probar en keytest.ru",
+                font=("Segoe UI", 8),
+                bg="#e0e7ff",
+                fg="#1e3a8a",
+                relief="flat",
+                cursor="hand2",
+                command=_abrir_test_teclado,
+            ).grid(row=i, column=3, padx=5, pady=2, sticky="w")
+
         comps_data.append({"nombre": comp_name, "estado": cmb_estado, "obs": ent_obs})
+
+    # Igual que en la ventana de retiro/entrega manual: la revisión de
+    # componentes solo aplica a retiros, no a entregas.
+    if lote.get("mov") == "Retiro":
+        lf_fallas.pack(fill="x", pady=(14, 0))
+    else:
+        for c in comps_data:
+            c["estado"].set("OK")
+            c["obs"].config(state=tk.NORMAL)
+            c["obs"].delete(0, tk.END)
+            c["obs"].config(state=tk.DISABLED, bg="#f1f5f9")
 
     tk.Label(
         interior, text="Observación general (opcional)", font=fuente(9, True),

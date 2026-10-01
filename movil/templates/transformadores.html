@@ -68,140 +68,64 @@
 {% endfor %}
 
 <div id="camara" hidden style="position:fixed;inset:0;z-index:10;background:#000;display:flex;flex-direction:column">
-  <video id="video" playsinline muted style="flex:1;width:100%;object-fit:cover"></video>
-  <div style="position:absolute;left:8%;right:8%;top:40%;height:20%;border:3px solid #ef4444;border-radius:12px;pointer-events:none"></div>
-  <div style="padding:12px 16px;background:#000;color:#fff">
-    <div id="cam-estado" class="sub" style="color:#cbd5e1;text-align:center">Apunta al código de barras del transformador</div>
-    <button type="button" id="cam-cerrar" class="secundario" style="color:#fff">Cerrar cámara</button>
+  <div id="cam-vista" style="position:relative;flex:1;overflow:hidden;touch-action:none">
+    <video id="video" playsinline muted style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover"></video>
+    <!-- Cuadro de lectura: se arrastra para moverlo y la esquina ↘ le cambia el tamaño.
+         Solo se lee lo que queda adentro. -->
+    <div id="cam-cuadro" style="position:absolute;border:3px solid #ef4444;border-radius:10px;
+         box-shadow:0 0 0 9999px rgba(0,0,0,.45);touch-action:none;cursor:move">
+      <div id="cam-asa" style="position:absolute;right:-16px;bottom:-16px;width:36px;height:36px;border-radius:50%;
+           background:#ef4444;color:#fff;display:flex;align-items:center;justify-content:center;
+           font-size:18px;touch-action:none;cursor:nwse-resize">↘</div>
+    </div>
+  </div>
+  <div style="padding:10px 16px;background:#000;color:#fff">
+    <div id="cam-estado" class="sub" style="color:#cbd5e1;text-align:center;min-height:2.6em"></div>
+    <div id="cam-diag" class="sub" style="color:#64748b;text-align:center;font-size:11px"></div>
+    <div id="cam-zoom-fila" hidden style="display:flex;align-items:center;gap:10px;margin-top:6px">
+      <span>🔍</span><input id="cam-zoom" type="range" style="flex:1;padding:0">
+    </div>
+    <div style="display:flex;gap:8px">
+      <button type="button" id="cam-linterna" hidden class="secundario" style="color:#fff;width:auto;padding:12px 16px">🔦</button>
+      <button type="button" id="cam-cerrar" class="secundario" style="color:#fff">Cerrar cámara</button>
+    </div>
   </div>
 </div>
 
+<script src="{{ url_for('static', filename='zxing.min.js') }}"></script>
 <script src="{{ url_for('static', filename='jsQR.js') }}"></script>
 <script>
 (() => {
-  // Lectura con la API nativa del navegador (BarcodeDetector, Chrome en
-  // Android) y, para los QR, también con jsQR (servido desde static/, sin
-  // salir a internet): en algunos celulares el lector nativo no trae QR o no
-  // los encuentra. La cámara exige HTTPS.
+  // Tres lectores, en orden: el nativo del navegador (BarcodeDetector),
+  // zxing (Data Matrix y QR: los cargadores HP traen el CT en un Data Matrix,
+  // que parece QR pero jsQR no lee) y jsQR (QR). Las librerías se sirven
+  // desde static/, sin salir a internet. Todos leen SOLO el cuadro que ajusta
+  // la persona, recortado a la resolución completa de la cámara.
+  // La cámara exige HTTPS.
   const btn = document.getElementById("btn-camara");
   const input = document.getElementById("transf");
   if (!btn || !input) return;
-  const capa = document.getElementById("camara");
-  const video = document.getElementById("video");
-  const estado = document.getElementById("cam-estado");
+  const $ = id => document.getElementById(id);
+  const capa = $("camara"), vista = $("cam-vista"), video = $("video"), estado = $("cam-estado");
+  const cuadro = $("cam-cuadro"), asa = $("cam-asa");
+  const zoomFila = $("cam-zoom-fila"), zoom = $("cam-zoom"), linterna = $("cam-linterna");
   const CLAVE = "movil-camara";       // cámara abierta entre un trafo y el siguiente
   const ULTIMO = "movil-ultimo-trafo"; // no re-leer la etiqueta recién guardada
-  const ss = {
-    get: k => { try { return sessionStorage.getItem(k); } catch (e) { return null; } },
-    set: (k, v) => { try { sessionStorage.setItem(k, v); } catch (e) {} },
-    del: k => { try { sessionStorage.removeItem(k); } catch (e) {} },
-  };
-  let stream = null, activo = false;
-
-  function aviso(txt) {
-    estado.textContent = txt;
+  const CAJA = "movil-cuadro";         // tamaño/posición del cuadro (se recuerda)
+  const guardado = (al, k) => { try { return al.getItem(k); } catch (e) { return null; } };
+  const guardar = (al, k, v) => { try { v === null ? al.removeItem(k) : al.setItem(k, v); } catch (e) {} };
+  const ss = { get: k => guardado(sessionStorage, k), set: (k, v) => guardar(sessionStorage, k, v), del: k => guardar(sessionStorage, k, null) };
+  let stream = null, pista = null, activo = false, detector = null, luz = false;
+  let zxing = null;
+  if (window.ZXing) {
+    zxing = new ZXing.MultiFormatReader();
+    const pistas = new Map();
+    pistas.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.DATA_MATRIX, ZXing.BarcodeFormat.QR_CODE]);
+    pistas.set(ZXing.DecodeHintType.TRY_HARDER, true);
+    zxing.setHints(pistas);
   }
 
-  async function abrir() {
-    if (!window.isSecureContext) {
-      alertaInline("La cámara necesita HTTPS. Entra por la dirección https://…ts.net de Tailscale.");
-      return;
-    }
-    let formatos = [];
-    if ("BarcodeDetector" in window) {
-      try {
-        formatos = await BarcodeDetector.getSupportedFormats();
-      } catch (e) {}
-    }
-    const detector = formatos.length ? new BarcodeDetector({ formats: formatos }) : null;
-    if (!detector && !window.jsQR) {
-      alertaInline("Este navegador no puede leer códigos. Usa Chrome en Android.");
-      return;
-    }
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: false,
-      });
-    } catch (e) {
-      alertaInline("No se pudo abrir la cámara: " + e.message);
-      ss.del(CLAVE);
-      return;
-    }
-    ss.set(CLAVE, "1");
-    capa.hidden = false;
-    video.srcObject = stream;
-    await video.play();
-    activo = true;
-    aviso(detector ? "Apunta al código del transformador (barras o QR)"
-                   : "Apunta al QR del transformador (este navegador no lee códigos de barras)");
-    leer(detector, null, 0);
-  }
-
-  function cerrar() {
-    activo = false;
-    ss.del(CLAVE);
-    if (stream) stream.getTracks().forEach(t => t.stop());
-    stream = null;
-    capa.hidden = true;
-  }
-
-  // Se pide la MISMA lectura dos veces seguidas: un código 1D mal enfocado
-  // a veces devuelve basura una vez, casi nunca dos veces igual.
-  async function leer(detector, previo, repeticiones) {
-    if (!activo) return;
-    let codigo = null;
-    if (detector) {
-      try {
-        const hallados = await detector.detect(video);
-        // Si hay varias etiquetas a la vista, la más cercana al centro.
-        if (hallados.length) {
-          const cy = video.videoHeight / 2;
-          hallados.sort((a, b) =>
-            Math.abs(a.boundingBox.y + a.boundingBox.height / 2 - cy) -
-            Math.abs(b.boundingBox.y + b.boundingBox.height / 2 - cy));
-          codigo = limpiar(hallados[0].rawValue);
-        }
-      } catch (e) {}
-    }
-    if (!codigo) codigo = leerQR();
-    if (codigo && codigo === ss.get(ULTIMO)) {
-      aviso("Ese trafo ya se guardó (" + codigo + "). Escanea el siguiente.");
-      codigo = null;
-    }
-    if (codigo && codigo === previo && repeticiones >= 1) {
-      activo = false;
-      if (navigator.vibrate) navigator.vibrate(120);
-      ss.set(ULTIMO, codigo);
-      input.value = codigo;
-      if (stream) stream.getTracks().forEach(t => t.stop());
-      input.form.submit();
-      return;
-    }
-    const rep = codigo && codigo === previo ? repeticiones + 1 : 0;
-    setTimeout(() => leer(detector, codigo, rep), 150);
-  }
-
-  // jsQR trabaja sobre píxeles: se recorta el centro del cuadro (donde está
-  // la guía roja) y se achica, para que cada pasada tarde poco.
-  const lienzo = document.createElement("canvas");
-  const ctx = lienzo.getContext("2d", { willReadFrequently: true });
-  function leerQR() {
-    if (!window.jsQR || !video.videoWidth) return null;
-    const vw = video.videoWidth, vh = video.videoHeight;
-    const lado = Math.min(vw, vh) * 0.8;
-    const escala = Math.min(1, 640 / lado);
-    lienzo.width = lienzo.height = Math.round(lado * escala);
-    ctx.drawImage(video, (vw - lado) / 2, (vh - lado) / 2, lado, lado, 0, 0, lienzo.width, lienzo.height);
-    const img = ctx.getImageData(0, 0, lienzo.width, lienzo.height);
-    const qr = jsQR(img.data, img.width, img.height, { inversionAttempts: "attemptBoth" });
-    return qr && qr.data ? limpiar(qr.data) : null;
-  }
-
-  // Un QR puede traer saltos de línea o espacios de más: se deja en una línea.
-  function limpiar(txt) {
-    return String(txt || "").split(/\s+/).filter(Boolean).join(" ") || null;
-  }
+  const aviso = txt => { estado.textContent = txt; };
 
   function alertaInline(txt) {
     const div = document.createElement("div");
@@ -210,8 +134,224 @@
     input.form.prepend(div);
   }
 
+  // ── Cuadro ajustable. La caja se guarda en fracciones de la vista
+  //    (0..1) para que sirva igual al girar el celular.
+  let caja = null;
+  try { caja = JSON.parse(guardado(localStorage, CAJA)); } catch (e) {}
+  if (!caja || !(caja.w > 0)) caja = { x: 0.2, y: 0.3, w: 0.6, h: 0.3 };
+
+  function pintarCuadro() {
+    const r = vista.getBoundingClientRect();
+    cuadro.style.left = caja.x * r.width + "px";
+    cuadro.style.top = caja.y * r.height + "px";
+    cuadro.style.width = caja.w * r.width + "px";
+    cuadro.style.height = caja.h * r.height + "px";
+  }
+
+  function arrastre(el, mover) {
+    el.addEventListener("pointerdown", e => {
+      e.preventDefault();
+      e.stopPropagation();
+      el.setPointerCapture(e.pointerId);
+      const r = vista.getBoundingClientRect();
+      const ini = { x: e.clientX, y: e.clientY, caja: { ...caja } };
+      const mov = ev => {
+        mover(ini.caja, (ev.clientX - ini.x) / r.width, (ev.clientY - ini.y) / r.height, r);
+        pintarCuadro();
+      };
+      const fin = () => {
+        el.removeEventListener("pointermove", mov);
+        guardar(localStorage, CAJA, JSON.stringify(caja));
+      };
+      el.addEventListener("pointermove", mov);
+      el.addEventListener("pointerup", fin, { once: true });
+      el.addEventListener("pointercancel", fin, { once: true });
+    });
+  }
+  const limitar = (v, a, b) => Math.max(a, Math.min(b, v));
+  // Arrastrar el cuadro lo mueve.
+  arrastre(cuadro, (c, fx, fy) => {
+    caja.x = limitar(c.x + fx, 0, 1 - caja.w);
+    caja.y = limitar(c.y + fy, 0, 1 - caja.h);
+  });
+  // Arrastrar la esquina le cambia el tamaño (mínimo ~60 px por lado).
+  arrastre(asa, (c, fx, fy, r) => {
+    caja.w = limitar(c.w + fx, 60 / r.width, 1 - c.x);
+    caja.h = limitar(c.h + fy, 60 / r.height, 1 - c.y);
+  });
+  window.addEventListener("resize", () => { if (!capa.hidden) pintarCuadro(); });
+
+  async function abrir() {
+    if (!window.isSecureContext) {
+      alertaInline("La cámara necesita HTTPS. Entra por la dirección https://…ts.net de Tailscale.");
+      return;
+    }
+    let formatos = [];
+    if ("BarcodeDetector" in window) {
+      try { formatos = await BarcodeDetector.getSupportedFormats(); } catch (e) {}
+    }
+    detector = formatos.length ? new BarcodeDetector({ formats: formatos }) : null;
+    if (!detector && !zxing && !window.jsQR) {
+      alertaInline("Este navegador no puede leer códigos. Usa Chrome en Android.");
+      return;
+    }
+    try {
+      // Resolución alta: los QR de los trafos son chicos y densos.
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false,
+      });
+    } catch (e) {
+      alertaInline("No se pudo abrir la cámara: " + e.message);
+      ss.del(CLAVE);
+      return;
+    }
+    pista = stream.getVideoTracks()[0];
+    ss.set(CLAVE, "1");
+    capa.hidden = false;
+    pintarCuadro();
+    video.srcObject = stream;
+    await video.play();
+    await ajustarCamara();
+    activo = true;
+    aviso("Deja el código dentro del cuadro. Muévelo arrastrándolo y cambia su tamaño con ↘.");
+    // Diagnóstico: qué lectores hay y a qué resolución llega la cámara.
+    $("cam-diag").textContent =
+      "Nativo: " + (formatos.length ? formatos.join(", ") : "no") +
+      " · zxing: " + (zxing ? "sí" : "no") +
+      " · jsQR: " + (window.jsQR ? "sí" : "no") +
+      " · cámara " + video.videoWidth + "×" + video.videoHeight;
+    requestAnimationFrame(bucle);
+  }
+
+  // Enfoque continuo, zoom y linterna solo si el celular los ofrece.
+  async function ajustarCamara() {
+    const cap = pista.getCapabilities ? pista.getCapabilities() : {};
+    if (cap.focusMode && cap.focusMode.includes("continuous")) {
+      try { await pista.applyConstraints({ advanced: [{ focusMode: "continuous" }] }); } catch (e) {}
+    }
+    if (cap.zoom && cap.zoom.max > cap.zoom.min) {
+      zoom.min = cap.zoom.min;
+      zoom.max = Math.min(cap.zoom.max, cap.zoom.min * 8);
+      zoom.step = cap.zoom.step || 0.1;
+      zoom.value = (pista.getSettings().zoom) || cap.zoom.min;
+      zoomFila.hidden = false;
+    }
+    linterna.hidden = !cap.torch;
+  }
+
+  zoom.addEventListener("input", () => {
+    if (pista) pista.applyConstraints({ advanced: [{ zoom: Number(zoom.value) }] }).catch(() => {});
+  });
+  linterna.addEventListener("click", () => {
+    luz = !luz;
+    if (pista) pista.applyConstraints({ advanced: [{ torch: luz }] }).catch(() => {});
+  });
+
+  function cerrar() {
+    activo = false;
+    ss.del(CLAVE);
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = pista = null;
+    luz = false;
+    capa.hidden = true;
+  }
+
+  // ── Recorte del cuadro en píxeles del VIDEO. El video se muestra con
+  //    object-fit:cover (escalado y recortado), así que se deshace eso.
+  const lienzo = document.createElement("canvas");
+  const ctx = lienzo.getContext("2d", { willReadFrequently: true });
+  function recortarCuadro() {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw) return false;
+    const r = vista.getBoundingClientRect(), c = cuadro.getBoundingClientRect();
+    const esc = Math.max(r.width / vw, r.height / vh);
+    const dx = (r.width - vw * esc) / 2, dy = (r.height - vh * esc) / 2;
+    const x = limitar((c.left - r.left - dx) / esc, 0, vw);
+    const y = limitar((c.top - r.top - dy) / esc, 0, vh);
+    const w = limitar(c.width / esc, 1, vw - x), h = limitar(c.height / esc, 1, vh - y);
+    // Resolución completa de la cámara; solo se achica si el cuadro es
+    // enorme, y se agranda al doble si es muy chico (jsQR lo agradece).
+    const f = Math.max(w, h) > 1200 ? 1200 / Math.max(w, h) : Math.max(w, h) < 400 ? 2 : 1;
+    lienzo.width = Math.round(w * f);
+    lienzo.height = Math.round(h * f);
+    ctx.imageSmoothingEnabled = f < 1;
+    ctx.drawImage(video, x, y, w, h, 0, 0, lienzo.width, lienzo.height);
+    return true;
+  }
+
+  async function leerCuadro() {
+    if (!recortarCuadro()) return null;
+    if (detector) {
+      try {
+        const hallados = await detector.detect(lienzo);
+        if (hallados.length) return { valor: hallados[0].rawValue, qr: ["qr_code", "data_matrix"].includes(hallados[0].format) };
+      } catch (e) {}
+    }
+    if (zxing) {
+      try {
+        const fuente = new ZXing.HTMLCanvasElementLuminanceSource(lienzo);
+        // decodeWithState y no decode: decode() resetea los hints de setHints.
+        const r = zxing.decodeWithState(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(fuente)));
+        // Data Matrix y QR traen corrección de errores: una lectura basta.
+        if (r && r.getText()) return { valor: r.getText(), qr: true };
+      } catch (e) {}  // NotFoundException = nada en el cuadro
+    }
+    if (window.jsQR) {
+      const img = ctx.getImageData(0, 0, lienzo.width, lienzo.height);
+      const qr = jsQR(img.data, img.width, img.height, { inversionAttempts: "attemptBoth" });
+      if (qr && qr.data) return { valor: qr.data, qr: true };
+    }
+    return null;
+  }
+
+  const colorCuadro = c => {
+    cuadro.style.borderColor = c;
+    asa.style.background = c;
+  };
+
+  // Un código 1D mal enfocado a veces devuelve basura una vez: se pide la
+  // misma lectura dos veces seguidas. Un QR trae corrección de errores, así
+  // que con una basta.
+  let previo = null;
+  async function bucle() {
+    if (!activo) return;
+    const hallado = await leerCuadro();
+    const valor = hallado ? limpiar(hallado.valor) : null;
+    if (!valor) {
+      colorCuadro("#ef4444");
+    } else if (valor === ss.get(ULTIMO)) {
+      colorCuadro("#f59e0b");
+      aviso("Ese trafo ya se guardó (" + valor + "). Escanea el siguiente.");
+    } else {
+      colorCuadro("#22c55e");
+      if (hallado.qr || valor === previo) {
+        aceptar(valor);
+        return;
+      }
+      aviso("Leyendo… " + valor);
+    }
+    previo = valor;
+    setTimeout(() => requestAnimationFrame(bucle), 60);
+  }
+
+  function aceptar(valor) {
+    activo = false;
+    if (navigator.vibrate) navigator.vibrate(120);
+    aviso("✓ " + valor);
+    ss.set(ULTIMO, valor);
+    input.value = valor;
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    input.form.submit();
+  }
+
+  // Un QR puede traer saltos de línea o espacios de más: se deja en una línea.
+  function limpiar(txt) {
+    return String(txt || "").split(/\s+/).filter(Boolean).join(" ") || null;
+  }
+
   btn.addEventListener("click", abrir);
-  document.getElementById("cam-cerrar").addEventListener("click", cerrar);
+  $("cam-cerrar").addEventListener("click", cerrar);
   // Después de guardar un trafo la cámara se reabre sola para el siguiente;
   // si hubo error o aviso, se queda cerrada para que se pueda leer.
   {% if reabrir_camara %}

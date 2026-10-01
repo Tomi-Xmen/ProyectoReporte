@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block header %}<h1>OT abiertas</h1><a href="{{ url_for('inicio') }}" aria-label="Recargar">⟳</a>{% endblock %}
+{% block contenido %}
+{% if error_base %}
+  <div class="aviso falta">No se encuentra la carpeta de reportes:<br><span class="mono">{{ error_base }}</span><br>Revisá REPORTES_BASE en el .env.</div>
+{% else %}
+  {% if not activo %}
+    <div class="aviso sobra">No hay ninguna OT publicada como activa.</div>
+  {% endif %}
+  {% for l in lotes %}
+    <a class="tarjeta{% if l.activo %} activo{% endif %}"
+       href="{{ url_for('lote', grupo=l.grupo, cliente=l.cliente, carpeta=l.carpeta) }}">
+      <div class="fila">
+        <strong>{{ l.carpeta }}</strong>
+        {% if l.activo %}<span class="pill ok">ACTIVA</span>{% endif %}
+      </div>
+      <div class="fila sub">
+        <span>{{ l.cliente|replace('_', ' ') }} · {{ l.grupo }}</span>
+        <span>{{ l.equipos }} equipo(s)</span>
+      </div>
+    </a>
+  {% else %}
+    <p class="sub">No hay OT abiertas.</p>
+  {% endfor %}
+{% endif %}
+{% endblock %}

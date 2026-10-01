@@ -29,3 +29,7 @@ clave_scp
 *.pem
 *.ppk
 !*.pub
+# Reporte Móvil: sus plantillas son .html y deben versionarse (las reglas de
+# arriba ignoran los .html/.json generados por REPORTE3).
+!movil/templates/*.html
+movil/.env

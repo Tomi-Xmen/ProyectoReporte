@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block head %}{% if not cerrado %}<meta http-equiv="refresh" content="30">{% endif %}{% endblock %}
+{% block titulo %}{{ carpeta }} · Reporte Móvil{% endblock %}
+{% block header %}<a href="{{ url_for('inicio') }}" aria-label="Volver">←</a><h1>{{ carpeta }} · {{ cliente|replace('_', ' ') }}</h1>{% endblock %}
+{% block contenido %}
+<p class="sub">
+  {{ tipo_doc }}
+  {% if activo %}· <span class="pill ok">ACTIVA</span>{% endif %}
+  {% if cerrado %}· <span class="pill falta">CERRADA</span>{% else %}· se actualiza cada 30 s{% endif %}
+</p>
+
+<div class="resumen">
+  <div><b>{{ resumen.llegados }}{% if resumen.esperados %}/{{ resumen.esperados }}{% endif %}</b><span class="sub">llegaron</span></div>
+  <div><b>{{ resumen.faltan }}</b><span class="sub">faltan</span></div>
+  <div><b>{{ resumen.con_transf }}</b><span class="sub">con trafo</span></div>
+</div>
+{% if not cerrado and resumen.llegados %}
+  <a class="boton" href="{{ url_for('transformadores', grupo=grupo, cliente=cliente, carpeta=carpeta) }}">🔌 Escanear transformadores</a>
+{% endif %}
+{% if not resumen.esperados %}<p class="sub">Esta OT no tiene lista de esperados: todo lo que llega se da por bueno.</p>{% endif %}
+
+{% for f in filas %}
+  <div class="tarjeta">
+    <div class="fila">
+      <span class="mono"><strong>{{ f.serial }}</strong></span>
+      {% if f.estado == 'ok' %}<span class="pill ok">✓ llegó</span>
+      {% elif f.estado == 'sobra' %}<span class="pill sobra">⚠ no esperado</span>
+      {% else %}<span class="pill falta">✗ falta</span>{% endif %}
+    </div>
+    {% if f.estado != 'falta' %}
+      <div class="sub">{{ f.modelo or '—' }}{% if f.fecha %} · {{ f.fecha }}{% endif %}</div>
+      <div class="sub">Trafo:
+        {% if f.transf %}<span class="mono">{{ f.transf }}</span>{% endif %}
+        {% if f.transf_movil %}<span class="mono">📱 {{ f.transf_movil }}</span>
+          <span class="pill sobra">{% if f.transf %}distinto al escritorio{% else %}falta fusionar{% endif %}</span>{% endif %}
+        {% if not f.transf and not f.transf_movil %}pendiente{% endif %}
+      </div>
+    {% endif %}
+  </div>
+{% else %}
+  <p class="sub">Todavía no llegó ningún equipo.</p>
+{% endfor %}
+{% endblock %}

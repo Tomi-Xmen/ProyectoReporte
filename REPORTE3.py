@@ -3766,6 +3766,34 @@ def _seriales_del_portapapeles(texto):
     return seriales
 
 
+# Lo escaneado desde el celular (Reporte Móvil) queda en el servidor, en la
+# carpeta de la OT, como {SERIAL_EQUIPO: {"sn": ..., "fecha": ...}}. El
+# celular nunca toca los JSON de los equipos: los re-sube este escritorio y
+# pisaría el cambio. Por eso la fusión se hace acá, al abrir el módulo.
+_ARCHIVO_TRANSF_MOVIL = ".transformadores"
+
+
+def leer_transf_movil(lote):
+    """{SERIAL_EQUIPO (mayúsculas): sn_transf} escaneados desde el celular."""
+    cliente = abrir_conexion_scp()
+    try:
+        crudo = _leer_texto_remoto(
+            cliente, _ruta_remota(ruta_remota_lote(lote), _ARCHIVO_TRANSF_MOVIL)
+        )
+    finally:
+        cliente.close()
+    if not crudo:
+        return {}
+    datos = json.loads(crudo)
+    if not isinstance(datos, dict):
+        return {}
+    return {
+        str(k).strip().upper(): _normalizar_sn_transf(v.get("sn"))
+        for k, v in datos.items()
+        if isinstance(v, dict) and _normalizar_sn_transf(v.get("sn"))
+    }
+
+
 def abrir_modulo_agregar_transformador(ventana_padre):
     # Los chequeos van ANTES de crear la ventana: abrir un modal para cerrarlo
     # de inmediato hace parpadear la pantalla y roba el foco por un instante.
@@ -4035,8 +4063,61 @@ def abrir_modulo_agregar_transformador(ventana_padre):
             barra_bts, txt, cmd, color, padx=14, font=fuente(9, True)
         ).pack(side="left", padx=5)
 
+    lbl_movil = tk.Label(
+        win, text="", font=fuente(8), bg=COLORS["fondo"], fg=COLORS["gris"],
+        wraplength=720, justify="left",
+    )
+    lbl_movil.pack(pady=(0, 6), before=barra_bts)
+
+    def traer_del_celular():
+        # Solo rellena filas VACÍAS: lo que ya está cargado en el escritorio
+        # no se pisa sin mirar. Si difiere, se avisa y decide la persona.
+        lbl_movil.config(text="📱 Consultando lo escaneado desde el celular…")
+        win.update_idletasks()
+        try:
+            movil = leer_transf_movil(lote)
+        except Exception as e:
+            lbl_movil.config(
+                text=f"📱 No se pudo consultar el celular (se sigue sin eso): "
+                f"{str(e).splitlines()[0]}",
+                fg=COLORS["gris"],
+            )
+            return
+        traidos, distintos = 0, []
+        for f in filas:
+            sn_eq = str(f["jdata"].get("SERIAL", "")).strip().upper()
+            sn_movil = movil.get(sn_eq, "")
+            if not sn_movil:
+                continue
+            actual = _normalizar_sn_transf(f["entry"].get())
+            if not actual:
+                f["entry"].insert(0, sn_movil)
+                f["entry"].config(bg="#dcfce7")
+                traidos += 1
+            elif actual.upper() != sn_movil.upper():
+                distintos.append(f"{sn_eq}: aquí {actual}, celular {sn_movil}")
+        if not traidos and not distintos:
+            lbl_movil.config(text="")
+            return
+        texto = []
+        if traidos:
+            texto.append(
+                f"📱 {traidos} transformador(es) traído(s) del celular (en verde). "
+                "Revisá y apretá GUARDAR."
+            )
+        if distintos:
+            texto.append(
+                "⚠ Distintos al celular (no se tocaron): " + "; ".join(distintos[:5])
+                + (" …" if len(distintos) > 5 else "")
+            )
+        lbl_movil.config(text="\n".join(texto), fg=COLORS["azul"])
+        refrescar_estado()
+
     refrescar_estado()
     filas[0]["entry"].focus_set()
+    # Después de mostrar la ventana: la consulta por SSH tarda un momento y
+    # no debe dejar la pantalla en blanco mientras tanto.
+    win.after(100, traer_del_celular)
     win.wait_window()
 
 

@@ -1,0 +1,16 @@
+[Unit]
+Description=Reporte Móvil (vista web para el celular)
+After=network.target
+
+[Service]
+# Mismo usuario que recibe los envíos por SCP: ya puede leer (y, en la
+# fase de transformadores, escribir) el árbol de Reportes_Guardados.
+User=Reporte
+WorkingDirectory=/opt/reporte-movil
+EnvironmentFile=/opt/reporte-movil/.env
+# Un solo worker alcanza: es un único usuario.
+ExecStart=/opt/reporte-movil/venv/bin/gunicorn -w 1 -b 0.0.0.0:5070 app:app
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

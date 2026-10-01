@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block contenido %}
+<form method="post" class="tarjeta" style="margin-top:24px">
+  <label for="clave" class="sub">Clave</label>
+  <input id="clave" name="clave" type="password" autocomplete="current-password" autofocus>
+  {% if error %}<p class="aviso falta">{{ error }}</p>{% endif %}
+  <button type="submit">Entrar</button>
+</form>
+{% endblock %}

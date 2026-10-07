@@ -1,0 +1,10 @@
+# Interfaz de escritorio (Qt). "Essentials" trae solo los módulos básicos de
+# Qt: alcanza para la app y deja el .exe mucho más liviano que PySide6 completo.
+PySide6-Essentials>=6.8
+
+# Envío al servidor por SCP (SSH).
+paramiko
+scp
+
+# API de FOG (sesiones multicast).
+requests

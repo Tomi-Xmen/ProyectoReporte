@@ -29,3 +29,5 @@ clave_scp
 *.pem
 *.ppk
 !*.pub
+# Pruebas
+.pytest_cache/

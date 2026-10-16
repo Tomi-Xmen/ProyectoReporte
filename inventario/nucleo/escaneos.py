@@ -278,12 +278,17 @@ def elegir_codigo(lecturas, esperado=None, reglas=()):
 #  2. Aplicar el escaneo al lote
 # ─────────────────────────────────────────────────────────
 class LoteInvalido(ValueError):
-    """Datos de lote que no se pueden usar. Trae título y mensaje para el usuario."""
+    """
+    Datos de lote que no se pueden usar. Trae título y mensaje para el usuario
+    y un código HTTP para la API: 400 dato mal formado, 404 el lote no existe,
+    409 existe pero está cerrado.
+    """
 
-    def __init__(self, titulo, mensaje):
+    def __init__(self, titulo, mensaje, codigo=400):
         super().__init__(mensaje)
         self.titulo = titulo
         self.mensaje = mensaje
+        self.codigo = codigo
 
 
 def lote_desde_formulario(mov, cliente, numero, numero_sec=""):
@@ -326,9 +331,9 @@ def resolver_lote(mov, cliente, numero):
 
     lote = hacer_lote(mov, cliente, numero)
     if not os.path.isdir(lote["ruta"]):
-        raise LoteInvalido("Lote inexistente", f"No existe {etiqueta_lote(lote)}.")
+        raise LoteInvalido("Lote inexistente", f"No existe {etiqueta_lote(lote)}.", 404)
     if esta_cerrado(lote["ruta"]):
-        raise LoteInvalido("Lote cerrado", f"{etiqueta_lote(lote)} ya está cerrado.")
+        raise LoteInvalido("Lote cerrado", f"{etiqueta_lote(lote)} ya está cerrado.", 409)
     lote["numero_sec"] = numero_sec_en_disco(lote["ruta"])
     return lote
 

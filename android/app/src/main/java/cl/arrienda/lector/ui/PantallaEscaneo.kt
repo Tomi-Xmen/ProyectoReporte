@@ -1,6 +1,7 @@
 package cl.arrienda.lector.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -172,19 +173,19 @@ fun PantallaEscaneo(estado: EstadoUi, vm: LectorViewModel) {
         HorizontalDivider()
         LazyColumn(Modifier.weight(1f)) {
             // Sin key: un lote viejo podría traer dos registros con el mismo serial.
-            items(lote.equipos.asReversed()) { e -> FilaEquipo(e) }
+            items(lote.equipos.asReversed()) { e -> FilaEquipo(e) { vm.abrirEquipo(e.serial) } }
         }
     }
 }
 
 @Composable
-private fun FilaEquipo(e: EquipoLote) {
+private fun FilaEquipo(e: EquipoLote, abrir: () -> Unit) {
     val icono = when (e.tipo) {
         Tipos.MONITOR -> "🖥️"
         Tipos.IMPRESORA -> "🖨️"
         else -> "💻"
     }
-    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().clickable(onClick = abrir).padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(icono, modifier = Modifier.padding(end = 8.dp))
         Column(Modifier.weight(1f)) {
             Text(e.serial, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)

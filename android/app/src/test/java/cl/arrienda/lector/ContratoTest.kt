@@ -1,8 +1,12 @@
 package cl.arrienda.lector
 
+import cl.arrienda.lector.data.CambiosEquipo
+import cl.arrienda.lector.data.Disco
+import cl.arrienda.lector.data.HardwareEquipo
 import cl.arrienda.lector.data.ErrorApi
 import cl.arrienda.lector.data.EstadoLote
 import cl.arrienda.lector.data.EstadoPc
+import cl.arrienda.lector.data.FichaEquipo
 import cl.arrienda.lector.data.RespuestaClientes
 import cl.arrienda.lector.data.RespuestaEscaneo
 import cl.arrienda.lector.data.RespuestaLotes
@@ -16,6 +20,7 @@ import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -105,5 +110,52 @@ class ContratoTest {
             val texto = describir(resp)
             assertTrue("$caso sin texto propio: $texto", texto != resp.estado && "null" !in texto)
         }
+    }
+
+    @Test
+    fun `ficha de un equipo y su edicion`() {
+        val f = cuerpo("equipo", FichaEquipo.serializer())
+        assertEquals("5CD805DVNV", f.serial)
+        assertEquals("TR-0009", f.datos.snTransf)
+        assertEquals("", f.datos.obs) // "Sin observaciones" llega vacío
+        assertFalse(f.sinHardware)
+        assertEquals("Intel i5", f.hardware.cpu)
+        assertEquals(listOf("DISCO-01"), f.hardware.discos.map { it.serial })
+        assertEquals(listOf("OK", "OBS", "MALO"), f.opciones.estados)
+        assertEquals(11, f.componentes.size)
+
+        val monitor = cuerpo("equipo_sin_hardware", FichaEquipo.serializer())
+        assertTrue(monitor.sinHardware)
+        assertEquals(HardwareEquipo(), monitor.hardware)
+
+        val conHw = cuerpo("equipo_hardware_editado", FichaEquipo.serializer())
+        assertEquals("Intel i7", conHw.hardware.cpu)
+        assertEquals(listOf(Disco("SSD 500GB", "AB1234")), conHw.hardware.discos)
+
+        val editada = cuerpo("equipo_editado", FichaEquipo.serializer())
+        assertEquals("Rayón en tapa", editada.datos.obs)
+        assertTrue(editada.version != f.version)
+
+        assertEquals(404, codigo("equipo_inexistente"))
+        assertEquals("cambiado", cuerpo("equipo_cambiado", ErrorApi.serializer()).error)
+        assertEquals(409, codigo("equipo_transformador_duplicado"))
+        assertEquals("duplicado", cuerpo("equipo_transformador_duplicado", ErrorApi.serializer()).error)
+    }
+
+    @Test
+    fun `solo viajan los campos tocados`() {
+        val f = cuerpo("equipo", FichaEquipo.serializer())
+        assertTrue(CambiosEquipo.entre(f, f.datos, f.componentes, f.hardware).vacio)
+
+        val componentes = f.componentes.toMutableList()
+        componentes[1] = componentes[1].copy(estado = "MALO", obs = "Píxeles muertos")
+        val c = CambiosEquipo.entre(f, f.datos.copy(obs = "Rayón"), componentes, f.hardware)
+        assertEquals(CambiosEquipo(obs = "Rayón", componentes = componentes), c)
+
+        val hw = f.hardware.copy(cpu = "Intel i7")
+        assertEquals(CambiosEquipo(hardware = hw), CambiosEquipo.entre(f, f.datos, f.componentes, hw))
+        // explicitNulls = false: los campos no tocados no van en el JSON.
+        val enviado = cl.arrienda.lector.data.json.encodeToString(CambiosEquipo.serializer(), c)
+        assertFalse("modelo" in enviado)
     }
 }

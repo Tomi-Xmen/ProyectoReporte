@@ -14,7 +14,8 @@ inventario/
     config.py          servidor SCP, carpeta base, librerías opcionales
     escaner.py         script de PowerShell y lectura del hardware
     lotes.py           OT/guías en disco: guardar, cerrar, mover, backups
-    escaneos.py        lector de códigos del celular: elegir el serial y aplicarlo al lote
+    escaneos.py        lector celular: elegir el serial y aplicarlo al lote
+    api_celular.py     lector celular: qué responde el PC a cada pedido
     reporte_html.py    plantilla del reporte y entrada de cada equipo
     reconstruccion.py  rearmar HTML y FUSIONADO desde los JSON
     remoto.py          envío por SCP y control central de clonación
@@ -27,8 +28,11 @@ inventario/
     widgets.py         piezas reutilizables (tarjetas, tablas, botones)
     tareas.py          trabajo en segundo plano sin congelar la ventana
     ventana_principal.py, dialogos.py, acciones.py, componentes.py
-    modulos/           mover OT, transformadores, etiquetas, panel de clonación
+    servidor_celular.py  HTTP del lector celular (QtNetwork)
+    modulos/           mover OT, transformadores, etiquetas, panel de clonación,
+                       lector celular
 tests/                 pruebas (pytest)
+herramientas/          simular_celular.py: prueba el lector sin la app
 REPORTE3_tk.py         versión anterior en Tkinter (respaldo temporal)
 ```
 
@@ -49,6 +53,30 @@ python -m venv .venv
 ```
 
 La app sigue el modo claro/oscuro de Windows.
+
+## Lector celular
+
+Menú → **Lector celular** → **Encender**. El panel muestra un QR que la app
+del celular escanea para emparejarse; desde ahí el celular registra
+notebooks, monitores e impresoras y empareja transformadores en las OT y
+guías abiertas, con los mismos JSON, HTML y FUSIONADO de siempre.
+
+- Viene **apagado**: si nadie lo enciende no se abre ningún puerto.
+- Funciona mientras el panel está abierto; al cerrarlo se desconecta.
+- Cada encendido genera un token nuevo (el QR anterior deja de servir).
+- Solo acepta conexiones de la red local. La primera vez Windows pregunta
+  si permite el acceso en la red: hay que aceptar para redes privadas.
+- El celular no cambia la OT activa del PC ni cierra lotes.
+
+Para probarlo sin la app: en el panel, *Copiar datos de emparejamiento*, y
+
+```
+.venv\Scripts\python herramientas\simular_celular.py
+```
+
+Cada línea es un escaneo (sirve también la pistola USB). Las reglas para
+reconocer cada tipo de serial van en `reglas_codigos.json`, junto al
+programa (ver `cargar_reglas` en `escaneos.py`).
 
 ## Tests
 

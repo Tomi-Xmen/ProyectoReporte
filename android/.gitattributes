@@ -1,0 +1,5 @@
+# gradlew es un script de shell: con CRLF (autocrlf en Windows) deja de
+# andar en Git Bash, Linux y macOS. El .bat sí va con CRLF.
+gradlew text eol=lf
+*.bat text eol=crlf
+*.jar binary

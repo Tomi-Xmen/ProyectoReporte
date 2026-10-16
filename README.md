@@ -14,6 +14,7 @@ inventario/
     config.py          servidor SCP, carpeta base, librerías opcionales
     escaner.py         script de PowerShell y lectura del hardware
     lotes.py           OT/guías en disco: guardar, cerrar, mover, backups
+    escaneos.py        lector de códigos del celular: elegir el serial y aplicarlo al lote
     reporte_html.py    plantilla del reporte y entrada de cada equipo
     reconstruccion.py  rearmar HTML y FUSIONADO desde los JSON
     remoto.py          envío por SCP y control central de clonación

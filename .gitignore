@@ -5,6 +5,7 @@ __pycache__/
 
 # Entornos virtuales (si usas alguno)
 venv/
+.venv/
 env/
 
 # Archivos y carpetas generadas por el script de Arrienda

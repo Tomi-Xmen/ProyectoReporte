@@ -57,6 +57,12 @@ class ApiPc(
     suspend fun estadoLote(lote: LoteRef): Resultado<EstadoLote> =
         pedir("POST", "/lote", json.encodeToString(PedidoLote.serializer(), PedidoLote(lote)), EstadoLote.serializer())
 
+    suspend fun ficha(lote: LoteRef, serial: String): Resultado<FichaEquipo> =
+        pedir("POST", "/equipo", json.encodeToString(PedidoEquipo.serializer(), PedidoEquipo(lote, serial)), FichaEquipo.serializer())
+
+    suspend fun editar(pedido: PedidoEditar): Resultado<FichaEquipo> =
+        pedir("POST", "/equipo/editar", json.encodeToString(PedidoEditar.serializer(), pedido), FichaEquipo.serializer())
+
     suspend fun escanear(pedido: PedidoEscaneo): Resultado<RespuestaEscaneo> =
         pedir("POST", "/escaneo", json.encodeToString(PedidoEscaneo.serializer(), pedido), RespuestaEscaneo.serializer())
 

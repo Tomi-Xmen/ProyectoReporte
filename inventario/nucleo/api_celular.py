@@ -11,6 +11,8 @@ mueve bytes, así toda la lógica se prueba sin abrir un puerto.
     POST /api/v1/lotes      crear o reabrir un lote {mov, cliente, numero, numero_sec, reabrir}
     POST /api/v1/lote       equipos de un lote {lote: {mov, cliente, numero}}
     POST /api/v1/escaneo    un escaneo (ver _escaneo)
+    POST /api/v1/equipo     ficha de un equipo {lote, serial} (ver nucleo/fichas.py)
+    POST /api/v1/equipo/editar  editar su JSON {lote, serial, version, cambios}
 
 Seguridad: cada sesión del panel genera un token nuevo que viaja solo en el QR
 de emparejamiento; sin él todo responde 401. El transporte además rechaza
@@ -28,6 +30,7 @@ import socket
 from collections import OrderedDict
 from datetime import datetime
 
+from . import fichas
 from .escaneos import (
     TIPO_TRANSFORMADOR,
     TIPOS_CODIGO,
@@ -90,6 +93,8 @@ def ip_principal():
 def describir_respuesta(r):
     """Una línea legible para el registro del panel."""
     estado = r.get("estado")
+    if estado == "editado":
+        return f"✏️ Ficha editada desde el celular: {', '.join(r['campos'])}"
     if estado == "registrado":
         return f"✅ {r['tipo']} registrado ({r['total']} en el lote)"
     if estado == "asignado":
@@ -172,6 +177,8 @@ class ApiCelular:
             return e.codigo, {"error": e.error, "mensaje": e.mensaje}
         except LoteInvalido as e:
             return e.codigo, {"error": "lote", "titulo": e.titulo, "mensaje": e.mensaje}
+        except fichas.ErrorFicha as e:
+            return e.codigo, {"error": e.error, "mensaje": e.mensaje}
         except Exception as e:  # un bug no debe tumbar el servidor ni la app
             return 500, {"error": "interno", "mensaje": str(e) or type(e).__name__}
 
@@ -195,6 +202,10 @@ class ApiCelular:
             ("POST", "/lotes"): lambda: self._crear_lote(datos),
             ("POST", "/lote"): lambda: estado_lote(self._lote(datos)),
             ("POST", "/escaneo"): lambda: self._escaneo(datos),
+            ("POST", "/equipo"): lambda: fichas.ficha(
+                self._lote(datos), self._texto(datos, "serial")
+            ),
+            ("POST", "/equipo/editar"): lambda: self._editar(datos),
         }
         if not ruta.startswith(PREFIJO):
             raise ErrorPedido(404, "ruta", f"Ruta desconocida: {ruta}")
@@ -244,6 +255,16 @@ class ApiCelular:
                 )
             reabrir_lote(lote)
         return estado_lote(abrir_lote(lote))
+
+    # ── Ficha ────────────────────────────────────────────
+    def _editar(self, datos):
+        lote = self._lote(datos)
+        cambios = datos.get("cambios")
+        ficha = fichas.editar(
+            lote, self._texto(datos, "serial"), cambios, self._texto(datos, "version")
+        )
+        self._avisar(lote, ficha["serial"], {"estado": "editado", "campos": sorted(cambios)})
+        return ficha
 
     # ── Escaneo ──────────────────────────────────────────
     def _escaneo(self, datos):

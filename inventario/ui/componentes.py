@@ -17,23 +17,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..nucleo.fichas import COMPONENTES, ESTADOS, VERSIONES_OFFICE  # noqa: F401 (los reexporta)
 from .widgets import boton, etiqueta
 
-COMPONENTES = [
-    "Carcaza",
-    "Pantalla",
-    "Teclado",
-    "Touchpad",
-    "Puertos USB",
-    "Puertos Video",
-    "Ethernet/Wi-Fi",
-    "Placa base",
-    "Memoria",
-    "Disco duro",
-    "Batería",
-]
-ESTADOS = ["OK", "OBS", "MALO"]
-VERSIONES_OFFICE = ["2013", "2016", "2019", "2021", "2024", "365"]
 URL_TEST_TECLADO = "https://keytest.ru/old.html"
 
 

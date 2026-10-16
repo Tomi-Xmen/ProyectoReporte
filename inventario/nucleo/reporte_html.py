@@ -495,6 +495,24 @@ def render_filas_ram(ram_list):
     )
 
 
+def resumen_ram(ram_list):
+    """
+    (fabricantes, partnumbers) de los módulos '8GB | 2400 | PC4 | Fabricante | PN',
+    unidos con ' / ' sin repetir, o 'Desconocida'.
+    """
+    fabricantes, partnumbers = [], []
+    for r in ram_list or []:
+        partes = [p.strip() for p in str(r).split("|")]
+        if len(partes) >= 4 and partes[3] not in fabricantes:
+            fabricantes.append(partes[3])
+        if len(partes) >= 5 and partes[4] not in partnumbers:
+            partnumbers.append(partes[4])
+    return (
+        " / ".join(fabricantes) or "Desconocida",
+        " / ".join(partnumbers) or "Desconocida",
+    )
+
+
 def render_filas_discos(discos):
     """
     Filas de discos desde [{'desc':…, 'serial':…}]. Devuelve (html, seriales).

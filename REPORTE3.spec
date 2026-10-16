@@ -12,7 +12,7 @@ a = Analysis(
     datas=[('favicon.ico', '.')],
     # Se importan dentro de try/except: se nombran para que nunca queden
     # afuera del .exe sin aviso (el envío por SCP dejaría de funcionar).
-    hiddenimports=['paramiko', 'scp', 'requests'],
+    hiddenimports=['paramiko', 'scp', 'requests', 'segno'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

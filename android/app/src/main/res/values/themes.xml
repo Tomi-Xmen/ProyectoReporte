@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Solo para la ventana mientras arranca: el resto lo pinta Compose (ui/Tema.kt). -->
+    <style name="Theme.Lector" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/fondo</item>
+    </style>
+
+    <color name="fondo">#FFF5F7FA</color>
+    <color name="ic_launcher_background">#FF1A3C6E</color>
+</resources>

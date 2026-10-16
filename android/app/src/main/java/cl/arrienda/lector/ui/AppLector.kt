@@ -56,6 +56,8 @@ fun AppLector(vm: LectorViewModel) {
             BackHandler { vm.volverALotes() }
             ConPermisoCamara { PantallaEscaneo(estado, vm) }
         }
+        // Su propio BackHandler: pregunta antes de perder cambios sin guardar.
+        Pantalla.EQUIPO -> PantallaEquipo(estado, vm)
     }
 
     estado.pregunta?.let { DialogoPregunta(it, vm) }

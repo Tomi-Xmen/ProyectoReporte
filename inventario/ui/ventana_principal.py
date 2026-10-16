@@ -24,7 +24,7 @@ from ..nucleo.lotes import MOV_CFG, carpeta_lote, etiqueta_lote
 from . import acciones, avisos
 from .componentes import COMPONENTES, RevisionComponentes, SeccionOffice
 from .dialogos import nuevo_lote
-from .modulos import etiquetas, mover_ot, panel_clonacion, transformadores
+from .modulos import celular, etiquetas, mover_ot, panel_clonacion, transformadores
 from .tareas import en_segundo_plano
 from .widgets import Tarjeta, TarjetaAccion, area_scroll, boton, etiqueta
 
@@ -123,6 +123,9 @@ class PaginaInicio(QWidget):
                 ("💻", "Cambiar nombre del equipo",
                  "Renombra esta PC a ARR-<serial de BIOS>.", "pizarra",
                  acciones.cambiar_nombre_equipo),
+                ("📱", "Lector celular",
+                 "Usá el celular como lector de códigos en las OT y guías.", "pizarra",
+                 celular.abrir),
             ],
         )
         layout.addStretch(1)

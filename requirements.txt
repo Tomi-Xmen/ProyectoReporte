@@ -8,3 +8,6 @@ scp
 
 # API de FOG (sesiones multicast).
 requests
+
+# QR de emparejamiento del lector celular (Python puro, sin dependencias).
+segno

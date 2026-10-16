@@ -5,6 +5,7 @@ __pycache__/
 
 # Entornos virtuales (si usas alguno)
 venv/
+.venv/
 env/
 
 # Archivos y carpetas generadas por el script de Arrienda
@@ -12,6 +13,8 @@ Reportes_Guardados/
 *.docx
 *.csv
 *.json
+# Contrato PC ↔ app Android: es fuente, no un reporte generado.
+!android/app/src/test/resources/contrato/*.json
 *.html
 
 # Archivos temporales del sistema

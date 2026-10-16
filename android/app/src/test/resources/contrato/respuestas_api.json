@@ -1,0 +1,262 @@
+{
+  "estado": {
+    "codigo": 200,
+    "cuerpo": {
+      "app": "inventario-arrienda",
+      "v": 1
+    }
+  },
+  "no_autorizado": {
+    "codigo": 401,
+    "cuerpo": {
+      "error": "no_autorizado",
+      "mensaje": "Emparejá el celular de nuevo."
+    }
+  },
+  "lotes": {
+    "codigo": 200,
+    "cuerpo": {
+      "lotes": [
+        {
+          "mov": "Retiro",
+          "cliente": "BETA",
+          "numero": "77",
+          "numero_sec": "",
+          "equipos": 1,
+          "etiqueta": "BETA · GUIA-77 · RETIROS"
+        },
+        {
+          "mov": "Entrega",
+          "cliente": "ACME",
+          "numero": "553",
+          "numero_sec": "G-9",
+          "equipos": 2,
+          "etiqueta": "ACME · OT-553 · ENTREGAS"
+        }
+      ]
+    }
+  },
+  "clientes": {
+    "codigo": 200,
+    "cuerpo": {
+      "clientes": [
+        "ACME",
+        "BETA"
+      ]
+    }
+  },
+  "lote": {
+    "codigo": 200,
+    "cuerpo": {
+      "mov": "Entrega",
+      "cliente": "ACME",
+      "numero": "553",
+      "numero_sec": "G-9",
+      "etiqueta": "ACME · OT-553 · ENTREGAS",
+      "equipos": [
+        {
+          "serial": "5CD805ABCD",
+          "tipo": "Notebook",
+          "modelo": "HP EliteBook 840",
+          "sn_transf": null,
+          "sin_hardware": false
+        },
+        {
+          "serial": "5CD805DVNV",
+          "tipo": "Notebook",
+          "modelo": "HP EliteBook 840",
+          "sn_transf": null,
+          "sin_hardware": false
+        }
+      ]
+    }
+  },
+  "lote_inexistente": {
+    "codigo": 404,
+    "cuerpo": {
+      "error": "lote",
+      "titulo": "Lote inexistente",
+      "mensaje": "No existe ACME · OT-999 · ENTREGAS."
+    }
+  },
+  "crear_lote": {
+    "codigo": 200,
+    "cuerpo": {
+      "mov": "Retiro",
+      "cliente": "GAMMA",
+      "numero": "5",
+      "numero_sec": "",
+      "etiqueta": "GAMMA · GUIA-5 · RETIROS",
+      "equipos": []
+    }
+  },
+  "crear_lote_cerrado": {
+    "codigo": 409,
+    "cuerpo": {
+      "error": "cerrado",
+      "mensaje": "BETA · GUIA-10 · RETIROS ya está cerrado (0 equipo(s)). ¿Reabrirlo?"
+    }
+  },
+  "crear_lote_invalido": {
+    "codigo": 400,
+    "cuerpo": {
+      "error": "lote",
+      "titulo": "Falta el cliente",
+      "mensaje": "Elegí o escribí un cliente."
+    }
+  },
+  "escaneo_registrado": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "registrado",
+      "serial": "MON12345",
+      "tipo": "Monitor",
+      "total": 3,
+      "descartes": [
+        {
+          "texto": "7801234567890",
+          "motivo": "Es un código de producto (EAN/UPC), no un serial."
+        }
+      ],
+      "lote": "ACME · OT-553 · ENTREGAS"
+    }
+  },
+  "escaneo_ya_estaba": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "ya_estaba",
+      "serial": "5CD805DVNV",
+      "tipo": "Notebook",
+      "total": 3,
+      "descartes": [],
+      "lote": "ACME · OT-553 · ENTREGAS"
+    }
+  },
+  "escaneo_en_otra_ot": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "en_otra_ot",
+      "serial": "ZZ99887",
+      "otro": "BETA · GUIA-77 · RETIROS",
+      "descartes": [],
+      "lote": "ACME · OT-553 · ENTREGAS"
+    }
+  },
+  "escaneo_asignado": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "asignado",
+      "sn_transf": "TR-0001",
+      "equipo": "5CD805DVNV",
+      "reemplazo": null,
+      "descartes": [],
+      "lote": "ACME · OT-553 · ENTREGAS"
+    }
+  },
+  "escaneo_asignado_reemplazo": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "asignado",
+      "sn_transf": "TR-0009",
+      "equipo": "5CD805DVNV",
+      "reemplazo": "TR-0001",
+      "descartes": [],
+      "lote": "ACME · OT-553 · ENTREGAS"
+    }
+  },
+  "escaneo_transformador_ya_estaba": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "ya_estaba",
+      "sn_transf": "TR-0009",
+      "equipo": "5CD805DVNV",
+      "descartes": [],
+      "lote": "ACME · OT-553 · ENTREGAS"
+    }
+  },
+  "escaneo_duplicado": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "duplicado",
+      "sn_transf": "TR-0009",
+      "equipo": "5CD805DVNV",
+      "descartes": [],
+      "lote": "ACME · OT-553 · ENTREGAS"
+    }
+  },
+  "escaneo_equipo_no_encontrado": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "equipo_no_encontrado",
+      "serial": "NOEXISTE1",
+      "descartes": [],
+      "lote": "ACME · OT-553 · ENTREGAS"
+    }
+  },
+  "escaneo_rafaga": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "asignado",
+      "sn_transf": "TR-0003",
+      "equipo": "5CD805ABCD",
+      "reemplazo": null,
+      "descartes": [],
+      "lote": "ACME · OT-553 · ENTREGAS"
+    }
+  },
+  "escaneo_sin_equipo_pendiente": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "sin_equipo_pendiente",
+      "sn_transf": "TR-0004",
+      "descartes": [],
+      "lote": "ACME · OT-553 · ENTREGAS"
+    }
+  },
+  "escaneo_elegir": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "elegir",
+      "candidatos": [
+        "ABC12345",
+        "XYZ98765"
+      ],
+      "descartes": [],
+      "lote": "ACME · OT-553 · ENTREGAS"
+    }
+  },
+  "escaneo_sin_serial": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "sin_serial",
+      "candidatos": [],
+      "descartes": [
+        {
+          "texto": "7801234567890",
+          "motivo": "Es un código de producto (EAN/UPC), no un serial."
+        }
+      ],
+      "lote": "ACME · OT-553 · ENTREGAS"
+    }
+  },
+  "escaneo_otro_tipo": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "otro_tipo",
+      "valor": "5CD805XXXX",
+      "tipo": "Notebook",
+      "esperado": "Transformador",
+      "descartes": [],
+      "lote": "ACME · OT-553 · ENTREGAS"
+    }
+  },
+  "escaneo_sin_tipo": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "sin_tipo",
+      "valor": "QWE12345",
+      "descartes": [],
+      "lote": "ACME · OT-553 · ENTREGAS"
+    }
+  }
+}

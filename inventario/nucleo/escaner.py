@@ -89,7 +89,7 @@ $netInfo = @(Get-CimInstance Win32_NetworkAdapterConfiguration | Where-Object { 
 """
 
 
-def get_inventory_fast(max_retries=3, timeout_per_attempt=45):
+def get_inventory_fast(max_retries=3, timeout_per_attempt=25):
     last_error = None
 
     for attempt in range(1, max_retries + 1):

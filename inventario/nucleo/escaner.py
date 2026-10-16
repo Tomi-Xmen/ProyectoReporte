@@ -13,7 +13,7 @@ import tempfile
 import time
 from datetime import datetime
 
-from .reporte_html import render_filas_discos, render_filas_ram, render_filas_red
+from .reporte_html import render_filas_discos, render_filas_ram, render_filas_red, resumen_ram
 
 PS_SCRIPT = """
 $ErrorActionPreference = 'SilentlyContinue'
@@ -153,24 +153,7 @@ def get_inventory_fast(max_retries=3, timeout_per_attempt=25):
                 ram_list = [ram_list]
             ram_html = render_filas_ram(ram_list)
 
-            fabricantes_ram = []
-            for r in ram_list:
-                partes = r.split("|")
-                if len(partes) >= 4:
-                    fabricantes_ram.append(partes[3].strip())
-            fabricantes_unicos = list(set(fabricantes_ram))
-            fabricante_final = (
-                " / ".join(fabricantes_unicos) if fabricantes_unicos else "Desconocida"
-            )
-
-            partnumbers_ram = []
-            for r in ram_list:
-                partes = r.split("|")
-                if len(partes) >= 5:
-                    partnumbers_ram.append(partes[4].strip())
-            partnumber_final = (
-                " / ".join(set(partnumbers_ram)) if partnumbers_ram else "Desconocida"
-            )
+            fabricante_final, partnumber_final = resumen_ram(ram_list)
 
             disks = data.get("disks_data", [])
             if isinstance(disks, dict):

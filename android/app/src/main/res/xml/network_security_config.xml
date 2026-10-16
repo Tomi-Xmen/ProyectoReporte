@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  El PC (REPORTE3.py, panel "Lector celular") atiende por HTTP plano en la red
+  local: no hay un dominio ni un certificado al que apuntar. Android 9+ bloquea
+  HTTP por defecto, así que se permite.
+
+  Riesgo conocido y acotado: el token viaja sin cifrar dentro del Wi-Fi. Se
+  mitiga con un token nuevo en cada encendido del panel y un servidor que solo
+  acepta la red local. Mejora futura: TLS con certificado propio del PC y su
+  huella en el QR de emparejamiento.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

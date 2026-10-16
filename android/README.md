@@ -17,6 +17,18 @@ FUSIONADO de siempre.
    - **Cargadores en ráfaga**: cada cargador va al siguiente notebook sin
      cargador, en el orden en que se escanearon.
 
+Solo se leen los códigos que caen dentro del recuadro de la cámara. Su
+tamaño se cambia con el deslizador **Recuadro**: achicarlo sirve para las
+etiquetas con varios códigos juntos (el código del transformador al lado de las
+barras de P/N); al máximo lee toda la imagen.
+
+Los cargadores suelen traer el serial en un Data Matrix blanco sobre la
+etiqueta negra; la app analiza cada cuadro también en negativo para leerlos.
+
+Si la etiqueta sale borrosa, alejá el celular y acercá con **Zoom** (o
+pellizcando la imagen): de muy cerca muchas cámaras no enfocan. Tocar la
+imagen enfoca en ese punto.
+
 Cada respuesta suena y vibra distinto (OK, aviso, pregunta, error), así que
 se puede escanear sin mirar la pantalla. Si la etiqueta tiene varios códigos
 (S/N, P/N, EAN…) el PC elige el serial; si hay duda, pregunta. Una etiqueta

@@ -1,61 +1,42 @@
 package cl.arrienda.lector.escaneo
 
-import cl.arrienda.lector.data.RespuestaEscaneo
+import cl.arrienda.lector.data.EstadoLote
 import cl.arrienda.lector.data.Tipos
 
-/** Qué se está escaneando. */
+/** Qué se está escaneando. El primero es el modo con que se entra a un lote. */
 enum class Modo(val etiqueta: String) {
-    GUIADO("Notebook + cargador"),
+    TRANSFORMADOR("Cargadores"),
     NOTEBOOK("Notebooks"),
     MONITOR("Monitores"),
     IMPRESORA("Impresoras"),
-    TRANSFORMADOR("Cargadores en ráfaga"),
 }
 
 /**
- * Estado del escaneo guiado: en GUIADO se alterna notebook → su cargador →
- * notebook… Los demás modos escanean siempre lo mismo. En TRANSFORMADOR
- * (ráfaga) el PC asigna cada cargador al siguiente notebook sin cargador, en
- * el orden en que se escanearon.
+ * Qué se escanea ahora. Los notebooks llegan al lote desde el PC (escaneo de
+ * hardware); en CARGADORES el PC asigna cada cargador al siguiente notebook
+ * sin cargador, en el orden en que se escanearon.
  */
-data class Flujo(val modo: Modo = Modo.GUIADO, val equipoGuiado: String? = null) {
+data class Flujo(val modo: Modo = Modo.TRANSFORMADOR) {
 
     /** Tipo que se espera leer ahora. */
     val esperado: String
         get() = when (modo) {
-            Modo.GUIADO -> if (equipoGuiado != null) Tipos.TRANSFORMADOR else Tipos.NOTEBOOK
+            Modo.TRANSFORMADOR -> Tipos.TRANSFORMADOR
             Modo.NOTEBOOK -> Tipos.NOTEBOOK
             Modo.MONITOR -> Tipos.MONITOR
             Modo.IMPRESORA -> Tipos.IMPRESORA
-            Modo.TRANSFORMADOR -> Tipos.TRANSFORMADOR
         }
 
-    /** A qué equipo va el cargador (solo en guiado, después de leer el notebook). */
-    val serialEquipo: String? get() = if (modo == Modo.GUIADO) equipoGuiado else null
-
-    val indicacion: String
-        get() = when {
-            modo == Modo.GUIADO && equipoGuiado != null -> "Escaneá el cargador de $equipoGuiado"
-            modo == Modo.GUIADO -> "Escaneá el serial del notebook"
-            modo == Modo.TRANSFORMADOR -> "Escaneá los cargadores en el orden de los equipos"
-            else -> "Escaneá el serial del ${esperado.lowercase()}"
-        }
-
-    fun trasRespuesta(r: RespuestaEscaneo): Flujo = when {
-        modo != Modo.GUIADO -> this
-        equipoGuiado == null && r.estado in EQUIPO_LISTO && r.serial != null && r.tipo == Tipos.NOTEBOOK ->
-            copy(equipoGuiado = r.serial)
-        equipoGuiado != null && r.estado in CARGADOR_LISTO -> copy(equipoGuiado = null)
-        else -> this
+    fun indicacion(lote: EstadoLote?): String = when (modo) {
+        Modo.TRANSFORMADOR -> proximoSinCargador(lote)
+            ?.let { "Escaneá el cargador de $it" }
+            ?: "Todos los notebooks tienen cargador"
+        else -> "Escaneá el serial del ${esperado.lowercase()}"
     }
-
-    /** El notebook no tiene cargador (o llega después): seguir con el próximo equipo. */
-    fun saltarCargador() = copy(equipoGuiado = null)
 
     fun conModo(m: Modo) = Flujo(m)
-
-    private companion object {
-        val EQUIPO_LISTO = setOf("registrado", "ya_estaba")
-        val CARGADOR_LISTO = setOf("asignado", "ya_estaba")
-    }
 }
+
+/** El notebook al que el PC le dará el próximo cargador (misma regla que asignar_transformador). */
+fun proximoSinCargador(lote: EstadoLote?): String? =
+    lote?.equipos?.firstOrNull { it.tipo == Tipos.NOTEBOOK && it.snTransf == null }?.serial

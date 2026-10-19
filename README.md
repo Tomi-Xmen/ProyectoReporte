@@ -63,8 +63,13 @@ notebooks, monitores e impresoras y empareja transformadores en las OT y
 guías abiertas, con los mismos JSON, HTML y FUSIONADO de siempre.
 
 - Viene **apagado**: si nadie lo enciende no se abre ningún puerto.
-- Funciona mientras el panel está abierto; al cerrarlo se desconecta.
-- Cada encendido genera un token nuevo (el QR anterior deja de servir).
+- Encendido, **sigue conectado aunque se cierre el panel**; se apaga con
+  *Apagar* o al salir del programa. La tarjeta del menú muestra 🟢 si está on.
+- *Encender solo al abrir el programa*: arranca con la app, con el mismo
+  código y puerto, así el celular queda emparejado de un día para otro. Se
+  guarda en `lector_celular.json` junto al programa (no va al repo).
+- *Código nuevo* cambia el código del QR y desempareja a todo celular.
+- Si el PC no responde, el celular reintenta solo cada 5 s.
 - Solo acepta conexiones de la red local. La primera vez Windows pregunta
   si permite el acceso en la red: hay que aceptar para redes privadas.
 - El celular no cambia la OT activa del PC ni cierra lotes.

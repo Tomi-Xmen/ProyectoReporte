@@ -94,7 +94,7 @@ fun PantallaEscaneo(estado: EstadoUi, vm: LectorViewModel) {
                 alCambiarZoom = { zoom = it },
             )
             Text(
-                estado.flujo.indicacion,
+                estado.flujo.indicacion(lote),
                 color = Color.White,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -146,9 +146,6 @@ fun PantallaEscaneo(estado: EstadoUi, vm: LectorViewModel) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             OutlinedButton(onClick = { linterna = !linterna }) { Text(if (linterna) "🔦 Apagar" else "🔦 Luz") }
             OutlinedButton(onClick = vm::leerDeNuevo) { Text("↻ Releer") }
-            if (estado.flujo.modo == Modo.GUIADO && estado.flujo.equipoGuiado != null) {
-                OutlinedButton(onClick = vm::saltarCargador) { Text("Sin cargador") }
-            }
         }
         if (estado.pendientes.isNotEmpty()) {
             Button(onClick = vm::reintentarPendientes, enabled = !estado.ocupado, modifier = Modifier.fillMaxWidth()) {

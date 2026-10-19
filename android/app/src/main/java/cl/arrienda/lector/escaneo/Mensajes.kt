@@ -9,7 +9,7 @@ fun nivel(r: RespuestaEscaneo): Nivel = when (r.estado) {
     "registrado", "asignado" -> Nivel.OK
     "ya_estaba" -> Nivel.AVISO
     "en_otra_ot", "otro_tipo", "elegir", "sin_tipo" -> Nivel.PREGUNTA
-    else -> Nivel.ERROR // duplicado, equipo_no_encontrado, sin_equipo_pendiente, invalido, sin_serial
+    else -> Nivel.ERROR // duplicado, equipo_no_encontrado, sin_equipo_pendiente, es_equipo, invalido, sin_serial
 }
 
 /** Texto de una respuesta. Mismos textos que describir_respuesta del PC. */
@@ -26,6 +26,7 @@ fun describir(r: RespuestaEscaneo): String = when (r.estado) {
     "invalido" -> "❌ ${r.motivo ?: "Código inválido"}"
     "equipo_no_encontrado" -> "⚠️ El equipo ${r.serial} no está en el lote"
     "sin_equipo_pendiente" -> "⚠️ No quedan notebooks sin cargador"
+    "es_equipo" -> "⚠️ ${r.snTransf} es un equipo del lote, no un cargador"
     "elegir" -> "❔ Hay varios códigos: tocá el serial"
     "sin_serial" -> "❌ Ningún código era un serial"
     "sin_tipo" -> "❔ ¿Qué es ${r.valor}?"

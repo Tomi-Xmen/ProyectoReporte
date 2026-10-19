@@ -12,10 +12,11 @@ FUSIONADO de siempre.
    tienen que estar en el mismo Wi-Fi.
 3. Elegir una OT/guía abierta o crear una nueva.
 4. Elegir qué se escanea y apuntar a la etiqueta:
-   - **Notebook + cargador** (guiado): notebook, después su cargador, y así.
+   - **Cargadores** (el modo con que se entra): los notebooks llegan al lote
+     desde el PC y cada cargador va al siguiente notebook sin cargador, en el
+     orden en que se escanearon. Abajo de la cámara dice a cuál le toca; la
+     lista se refresca sola cada 3 s con lo que se escanea en el PC.
    - **Notebooks**, **Monitores**, **Impresoras**: uno tras otro.
-   - **Cargadores en ráfaga**: cada cargador va al siguiente notebook sin
-     cargador, en el orden en que se escanearon.
 
 Solo se leen los códigos que caen dentro del recuadro de la cámara. Su
 tamaño se cambia con el deslizador **Recuadro**: achicarlo sirve para las
@@ -42,7 +43,7 @@ el PC reconoce el reintento y no registra dos veces.
 ```
 app/src/main/java/cl/arrienda/lector/
   data/      contrato con el PC: modelos, cliente HTTP, emparejamiento guardado
-  escaneo/   cámara + ML Kit, cuándo una lectura está firme, modo guiado, textos
+  escaneo/   cámara + ML Kit, cuándo una lectura está firme, modos, textos
   ui/        pantallas (Compose), ViewModel, sonido y vibración
 app/src/test/  tests JVM (sin celular)
 ```

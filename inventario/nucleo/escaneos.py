@@ -430,6 +430,8 @@ def asignar_transformador(lote, sn_transf, serial_equipo=None):
       duplicado             — ya pertenece a OTRO equipo del lote ('equipo')
       equipo_no_encontrado  — serial_equipo no está en el lote
       sin_equipo_pendiente  — modo ráfaga y no queda notebook sin transformador
+      es_equipo             — el código es el serial de un equipo del lote
+                              (se escaneó la etiqueta del notebook): no se toca
       invalido              — serial vacío
 
     Con serial_equipo va a ese equipo (escaneo guiado: equipo y después su
@@ -442,6 +444,9 @@ def asignar_transformador(lote, sn_transf, serial_equipo=None):
         return {"estado": "invalido", "motivo": "Serial de transformador vacío."}
 
     equipos = equipos_en_orden_de_escaneo(lote)
+    clave = _clave(nuevo)
+    if any(_clave(jdata.get("SERIAL", "")) == clave for _, jdata in equipos):
+        return {"estado": "es_equipo", "sn_transf": nuevo}
     portador = next(
         (par for par in equipos if transformador_actual(par[1]).upper() == nuevo.upper()),
         None,

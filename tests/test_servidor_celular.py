@@ -149,6 +149,16 @@ def test_servidor_apagado_no_escucha(app):
 
 
 # ─── Panel ───────────────────────────────────────────────
+def _descartar(app, panel):
+    """El panel ya no se borra al cerrarlo (vive con la ventana): en el test se borra a mano."""
+    panel.apagar()
+    panel.deleteLater()
+    app.processEvents()
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
 def test_panel_enciende_empareja_y_apaga(app, lote_con_equipos, monkeypatch):
     from inventario.ui.modulos import celular
 
@@ -176,11 +186,56 @@ def test_panel_enciende_empareja_y_apaga(app, lote_con_equipos, monkeypatch):
     assert panel.tabla.item(0, 2).text() == "IMP12345"
     assert "Impresora registrado" in panel.tabla.item(0, 3).text()
 
-    # Encender de nuevo genera otro token: el QR viejo deja de servir.
-    token_viejo = panel.api.token
+    # Apagar y encender conserva token y puerto: el celular sigue emparejado.
+    token = panel.api.token
     panel.apagar()
     assert panel.servidor is None
     panel.encender()
-    assert panel.api.token != token_viejo
+    assert (panel.api.token, panel.servidor.puerto) == (token, puerto)
+
+    # Cerrar la ventana no desconecta: el servidor sigue atendiendo.
     panel.done(0)
-    assert panel.servidor is None and celular._panel is None
+    codigo, _ = _pedir(app, puerto, "GET", "/api/v1/estado", token=token)
+    assert codigo == 200
+
+    # "Código nuevo" desempareja al celular de antes.
+    monkeypatch.setattr(celular.avisos, "confirmar", lambda *a, **k: True)
+    panel._codigo_nuevo()
+    assert _pedir(app, puerto, "GET", "/api/v1/estado", token=token)[0] == 401
+    assert _pedir(app, puerto, "GET", "/api/v1/estado", token=panel.api.token)[0] == 200
+    _descartar(app, panel)
+
+
+def test_lector_se_enciende_solo_al_abrir_si_quedo_marcado(app, carpeta, monkeypatch):
+    from inventario.nucleo import api_celular
+    from inventario.ui.modulos import celular
+
+    monkeypatch.setattr(celular, "interfaces_locales", lambda: [("192.168.1.20", "Wi-Fi")])
+    monkeypatch.setattr(celular, "_panel", None)
+
+    celular.encender_al_iniciar(None)  # sin preferencias: no abre ningún puerto
+    assert not celular.esta_encendido()
+
+    api_celular.guardar_preferencias(
+        {"encender_al_iniciar": True, "token": "t" * 32, "puerto": None}
+    )
+    celular.encender_al_iniciar(None)
+    assert celular.esta_encendido()
+    assert celular._panel.api.token == "t" * 32
+    assert api_celular.cargar_preferencias()["puerto"] == celular._panel.servidor.puerto
+    _descartar(app, celular._panel)
+
+
+def test_preferencias_rotas_quedan_apagadas(carpeta):
+    from inventario.nucleo import api_celular
+
+    (carpeta / api_celular.ARCHIVO_PREFERENCIAS).write_text("{roto", encoding="utf-8")
+    assert api_celular.cargar_preferencias() == {
+        "encender_al_iniciar": False, "token": None, "puerto": None,
+    }
+    (carpeta / api_celular.ARCHIVO_PREFERENCIAS).write_text(
+        '{"encender_al_iniciar": "si", "token": "corto", "puerto": 22}', encoding="utf-8"
+    )
+    assert api_celular.cargar_preferencias() == {
+        "encender_al_iniciar": False, "token": None, "puerto": None,
+    }

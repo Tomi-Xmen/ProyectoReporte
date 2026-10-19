@@ -26,6 +26,8 @@ import cl.arrienda.lector.escaneo.Modo
 import cl.arrienda.lector.escaneo.Nivel
 import cl.arrienda.lector.escaneo.describir
 import cl.arrienda.lector.escaneo.nivel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -80,6 +82,12 @@ class LectorViewModel(app: Application) : AndroidViewModel(app) {
 
     val estabilizador = Estabilizador()
 
+    /** Refresca el lote mientras se escanea: los notebooks llegan desde el PC. */
+    private var refresco: Job? = null
+
+    /** Con un PC ya emparejado que no responde, se reintenta solo hasta que vuelva. */
+    private var reconexion: Job? = null
+
     init {
         viewModelScope.launch {
             guardado = almacen.leer()
@@ -131,11 +139,31 @@ class LectorViewModel(app: Application) : AndroidViewModel(app) {
                 if (r.codigo == 401) "El PC cambió el código: escaneá el QR de nuevo."
                 else r.error.mensaje,
             )
-            is Resultado.SinConexion -> ir(
-                Pantalla.EMPAREJAR,
-                "No se encontró el PC. Revisá que el panel \"Lector celular\" esté " +
-                    "encendido y que el celular esté en el mismo Wi-Fi.",
-            )
+            is Resultado.SinConexion -> {
+                ir(
+                    Pantalla.EMPAREJAR,
+                    "No se encontró el PC: reintentando solo… Revisá que el lector " +
+                        "esté encendido en el PC y que el celular esté en el mismo Wi-Fi.",
+                )
+                reconectarSolo()
+            }
+        }
+    }
+
+    private fun reconectarSolo() {
+        if (reconexion?.isActive == true) return
+        reconexion = viewModelScope.launch {
+            while (true) {
+                delay(RECONEXION_MS)
+                val e = guardado ?: break
+                val s = estado.value
+                if (api != null || s.pantalla != Pantalla.EMPAREJAR) break
+                if (s.ocupado) continue
+                if (ApiPc(e).estado() is Resultado.Ok) {
+                    conectar(e, guardar = false)
+                    break
+                }
+            }
         }
     }
 
@@ -197,6 +225,7 @@ class LectorViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun entrarAEscanear(lote: EstadoLote) {
         estabilizador.olvidar()
+        refrescarSeguido()
         actualizar {
             it.copy(
                 pantalla = Pantalla.ESCANEAR, lote = lote, flujo = Flujo(), aviso = null,
@@ -246,7 +275,6 @@ class LectorViewModel(app: Application) : AndroidViewModel(app) {
                 lote = lote.ref,
                 lecturas = lecturas,
                 esperado = s.flujo.esperado,
-                serialEquipo = s.flujo.serialEquipo,
             ),
         )
     }
@@ -295,7 +323,7 @@ class LectorViewModel(app: Application) : AndroidViewModel(app) {
         }
         senal(nivel(r))
         actualizar {
-            it.copy(flujo = it.flujo.trasRespuesta(r), aviso = Aviso(describir(r), nivel(r)), pregunta = pregunta)
+            it.copy(aviso = Aviso(describir(r), nivel(r)), pregunta = pregunta)
         }
         if (r.estado in CAMBIAN_EL_LOTE) refrescarLote()
     }
@@ -421,18 +449,31 @@ class LectorViewModel(app: Application) : AndroidViewModel(app) {
     fun cerrarEquipo() {
         estabilizador.olvidar()
         actualizar { it.copy(pantalla = Pantalla.ESCANEAR, ficha = null, mensaje = null, ocupado = false) }
+        refrescarSeguido()
     }
 
     // ── Modo ─────────────────────────────────────────────
     fun cambiarModo(m: Modo) = actualizar { it.copy(flujo = it.flujo.conModo(m)) }
 
-    fun saltarCargador() = actualizar { it.copy(flujo = it.flujo.saltarCargador()) }
-
     fun leerDeNuevo() = estabilizador.olvidar()
+
+    private fun refrescarSeguido() {
+        refresco?.cancel()
+        refresco = viewModelScope.launch {
+            while (true) {
+                delay(REFRESCO_MS)
+                val s = estado.value
+                if (s.pantalla != Pantalla.ESCANEAR) break
+                if (!s.ocupado && s.pregunta == null) refrescarLote()
+            }
+        }
+    }
 
     private fun nuevoId() = UUID.randomUUID().toString()
 
     private companion object {
         val CAMBIAN_EL_LOTE = setOf("registrado", "asignado")
+        const val REFRESCO_MS = 3_000L
+        const val RECONEXION_MS = 5_000L
     }
 }

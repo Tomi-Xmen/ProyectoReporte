@@ -242,6 +242,30 @@ def test_transformadores_en_rafaga(lote_con_equipos):
     assert escaneos.asignar_transformador(lote, "TR-0003")["estado"] == "sin_equipo_pendiente"
 
 
+def test_rafaga_sigue_con_los_equipos_que_llegan_del_pc(lote_con_equipos):
+    lote = lote_con_equipos
+    escaneos.asignar_transformador(lote, "TR-0001")
+    escaneos.asignar_transformador(lote, "TR-0002")
+    assert escaneos.asignar_transformador(lote, "TR-0003")["estado"] == "sin_equipo_pendiente"
+
+    # Llega un notebook nuevo escaneado en el PC: el próximo cargador es suyo.
+    lotes.guardar_equipo_general(lote, datos_equipo("SN3"), "", False, "", "2016", [])
+    r = escaneos.asignar_transformador(lote, "TR-0003")
+    assert (r["estado"], r["equipo"]) == ("asignado", "SN3")
+
+
+def test_la_etiqueta_de_un_equipo_no_se_guarda_como_cargador(lote_con_equipos):
+    lote = lote_con_equipos
+    primero = escaneos.asignar_transformador(lote, "TR-0001")["equipo"]
+    segundo = "SN2" if primero == "SN1" else "SN1"
+
+    assert escaneos.asignar_transformador(lote, segundo.lower())["estado"] == "es_equipo"
+    assert escaneos.asignar_transformador(lote, primero, serial_equipo=segundo)["estado"] == "es_equipo"
+    # No consumió ni pisó nada.
+    r = escaneos.asignar_transformador(lote, "TR-0002")
+    assert (r["estado"], r["equipo"]) == ("asignado", segundo)
+
+
 def test_transformador_guiado(lote_con_equipos):
     lote = lote_con_equipos
     r = escaneos.asignar_transformador(lote, "TR-0001", serial_equipo="SN2")

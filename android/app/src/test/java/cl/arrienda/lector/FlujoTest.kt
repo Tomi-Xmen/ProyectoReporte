@@ -1,52 +1,40 @@
 package cl.arrienda.lector
 
 import cl.arrienda.lector.data.Emparejamiento
-import cl.arrienda.lector.data.RespuestaEscaneo
+import cl.arrienda.lector.data.EquipoLote
+import cl.arrienda.lector.data.EstadoLote
 import cl.arrienda.lector.data.Tipos
 import cl.arrienda.lector.escaneo.Flujo
 import cl.arrienda.lector.escaneo.Modo
+import cl.arrienda.lector.escaneo.proximoSinCargador
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 
 class FlujoTest {
-    private fun r(estado: String, serial: String? = null, tipo: String? = Tipos.NOTEBOOK) =
-        RespuestaEscaneo(estado = estado, serial = serial, tipo = tipo)
+    private fun lote(vararg equipos: EquipoLote) =
+        EstadoLote(mov = "Entrega", cliente = "ACME", numero = "553", etiqueta = "ACME · OT-553", equipos = equipos.toList())
 
     @Test
-    fun `guiado alterna notebook y su cargador`() {
-        var f = Flujo(Modo.GUIADO)
-        assertEquals(Tipos.NOTEBOOK, f.esperado)
-        assertNull(f.serialEquipo)
-
-        f = f.trasRespuesta(r("registrado", "5CD805DVNV"))
+    fun `se entra escaneando cargadores`() {
+        val f = Flujo()
+        assertEquals(Modo.TRANSFORMADOR, f.modo)
         assertEquals(Tipos.TRANSFORMADOR, f.esperado)
-        assertEquals("5CD805DVNV", f.serialEquipo)
-
-        // Un error con el cargador no saca del paso: se reintenta el mismo.
-        assertEquals(f, f.trasRespuesta(r("duplicado", tipo = null)))
-
-        f = f.trasRespuesta(r("asignado", tipo = null))
-        assertEquals(Tipos.NOTEBOOK, f.esperado)
+        assertEquals(Tipos.NOTEBOOK, f.conModo(Modo.NOTEBOOK).esperado)
     }
 
     @Test
-    fun `guiado no pide cargador para monitores ni si el equipo esta en otra OT`() {
-        val f = Flujo(Modo.GUIADO)
-        assertNull(f.trasRespuesta(r("ya_estaba", "MON12345", Tipos.MONITOR)).equipoGuiado)
-        assertNull(f.trasRespuesta(r("en_otra_ot", "5CD805DVNV")).equipoGuiado)
-        assertNotNull(f.trasRespuesta(r("ya_estaba", "5CD805DVNV")).equipoGuiado)
-    }
-
-    @Test
-    fun `saltar cargador y cambiar de modo`() {
-        val f = Flujo(Modo.GUIADO, equipoGuiado = "5CD805DVNV")
-        assertNull(f.saltarCargador().equipoGuiado)
-        val rafaga = f.conModo(Modo.TRANSFORMADOR)
-        assertEquals(Tipos.TRANSFORMADOR, rafaga.esperado)
-        assertNull(rafaga.serialEquipo) // en ráfaga el PC elige el equipo
-        assertEquals(rafaga, rafaga.trasRespuesta(r("asignado")))
+    fun `indica el proximo notebook sin cargador en orden de escaneo`() {
+        val l = lote(
+            EquipoLote("5CD0000001", Tipos.NOTEBOOK, snTransf = "WHHRE0A1RKAL0C"),
+            EquipoLote("MON12345", Tipos.MONITOR),
+            EquipoLote("5CD0000002", Tipos.NOTEBOOK),
+            EquipoLote("5CD0000003", Tipos.NOTEBOOK),
+        )
+        assertEquals("5CD0000002", proximoSinCargador(l))
+        assertEquals("Escaneá el cargador de 5CD0000002", Flujo().indicacion(l))
+        assertNull(proximoSinCargador(lote(EquipoLote("5CD0000001", Tipos.NOTEBOOK, snTransf = "W1"))))
+        assertEquals("Todos los notebooks tienen cargador", Flujo().indicacion(lote()))
     }
 
     @Test

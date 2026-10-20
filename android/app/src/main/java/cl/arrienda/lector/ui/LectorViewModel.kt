@@ -4,12 +4,18 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import cl.arrienda.lector.data.AlmacenEmparejamiento
+import cl.arrienda.lector.data.CambiosEquipo
+import cl.arrienda.lector.data.Componente
+import cl.arrienda.lector.data.DatosEquipo
 import cl.arrienda.lector.data.ApiPc
 import cl.arrienda.lector.data.Emparejamiento
 import cl.arrienda.lector.data.EstadoLote
+import cl.arrienda.lector.data.FichaEquipo
+import cl.arrienda.lector.data.HardwareEquipo
 import cl.arrienda.lector.data.Lectura
 import cl.arrienda.lector.data.LoteAbierto
 import cl.arrienda.lector.data.LoteRef
+import cl.arrienda.lector.data.PedidoEditar
 import cl.arrienda.lector.data.PedidoEscaneo
 import cl.arrienda.lector.data.PedidoNuevoLote
 import cl.arrienda.lector.data.RespuestaEscaneo
@@ -29,7 +35,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.UUID
 
-enum class Pantalla { CARGANDO, EMPAREJAR, LOTES, NUEVO_LOTE, ESCANEAR }
+enum class Pantalla { CARGANDO, EMPAREJAR, LOTES, NUEVO_LOTE, ESCANEAR, EQUIPO }
 
 data class Aviso(val texto: String, val nivel: Nivel)
 
@@ -48,6 +54,8 @@ data class EstadoUi(
     val lotes: List<LoteAbierto> = emptyList(),
     val clientes: List<String> = emptyList(),
     val lote: EstadoLote? = null,
+    /** El equipo abierto en la pantalla EQUIPO. */
+    val ficha: FichaEquipo? = null,
     val flujo: Flujo = Flujo(),
     val aviso: Aviso? = null,
     val pregunta: Pregunta? = null,
@@ -340,6 +348,79 @@ class LectorViewModel(app: Application) : AndroidViewModel(app) {
             senal(if (quedan.isEmpty()) Nivel.OK else Nivel.ERROR)
             if (ultimo != null) refrescarLote()
         }
+    }
+
+    // ── Ficha del equipo ─────────────────────────────────
+    fun abrirEquipo(serial: String) {
+        val api = api ?: return
+        val ref = estado.value.lote?.ref ?: return
+        if (estado.value.ocupado) return
+        viewModelScope.launch {
+            actualizar { it.copy(ocupado = true) }
+            when (val r = api.ficha(ref, serial)) {
+                is Resultado.Ok -> actualizar {
+                    it.copy(pantalla = Pantalla.EQUIPO, ficha = r.valor, ocupado = false, mensaje = null)
+                }
+                else -> avisarFallaFicha(r)
+            }
+        }
+    }
+
+    fun guardarEquipo(datos: DatosEquipo, componentes: List<Componente>, hardware: HardwareEquipo) {
+        val api = api ?: return
+        val s = estado.value
+        val ref = s.lote?.ref ?: return
+        val ficha = s.ficha ?: return
+        val cambios = CambiosEquipo.entre(ficha, datos, componentes, hardware)
+        if (cambios.vacio || s.ocupado) return
+        viewModelScope.launch {
+            actualizar { it.copy(ocupado = true, mensaje = null) }
+            when (val r = api.editar(PedidoEditar(ref, ficha.serial, ficha.version, cambios))) {
+                is Resultado.Ok -> {
+                    senal(Nivel.OK)
+                    actualizar { it.copy(ficha = r.valor, ocupado = false, mensaje = "✅ Guardado en el PC.") }
+                    refrescarLote()
+                }
+                is Resultado.Rechazado -> {
+                    senal(Nivel.ERROR)
+                    when {
+                        r.codigo == 401 -> falla(r)
+                        // El lote se cerró en el PC: se vuelve a la lista, como al escanear.
+                        r.error.error == "lote" -> cargarLotes(r.error.mensaje)
+                        // Cambió en el PC (o el guardado llegó y se perdió la respuesta):
+                        // se trae lo que hay ahora para no pisarlo.
+                        r.error.error == "cambiado" -> recargarFicha(ref, ficha.serial, r.error.mensaje)
+                        else -> actualizar { it.copy(ocupado = false, mensaje = "❌ ${r.error.mensaje}") }
+                    }
+                }
+                is Resultado.SinConexion -> {
+                    senal(Nivel.ERROR)
+                    actualizar { it.copy(ocupado = false, mensaje = "📵 Sin conexión con el PC: no se guardó.") }
+                }
+            }
+        }
+    }
+
+    private suspend fun recargarFicha(ref: LoteRef, serial: String, mensaje: String) {
+        val nueva = (api?.ficha(ref, serial) as? Resultado.Ok)?.valor
+        actualizar { it.copy(ficha = nueva ?: it.ficha, ocupado = false, mensaje = "⚠️ $mensaje Se recargó: revisá y guardá de nuevo.") }
+    }
+
+    private fun avisarFallaFicha(r: Resultado<*>) {
+        senal(Nivel.ERROR)
+        when {
+            r is Resultado.Rechazado && r.codigo == 401 -> falla(r)
+            r is Resultado.Rechazado && r.error.error == "lote" -> cargarLotes(r.error.mensaje)
+            else -> {
+                val texto = (r as? Resultado.Rechazado)?.error?.mensaje ?: "📵 Sin conexión con el PC."
+                actualizar { it.copy(ocupado = false, aviso = Aviso("❌ $texto", Nivel.ERROR)) }
+            }
+        }
+    }
+
+    fun cerrarEquipo() {
+        estabilizador.olvidar()
+        actualizar { it.copy(pantalla = Pantalla.ESCANEAR, ficha = null, mensaje = null, ocupado = false) }
     }
 
     // ── Modo ─────────────────────────────────────────────

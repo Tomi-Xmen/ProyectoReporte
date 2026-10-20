@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -23,11 +24,13 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -43,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import cl.arrienda.lector.data.EquipoLote
 import cl.arrienda.lector.data.Tipos
 import cl.arrienda.lector.escaneo.Modo
+import cl.arrienda.lector.escaneo.Recuadro
 import cl.arrienda.lector.escaneo.VistaCamara
 
 @Composable
@@ -50,6 +54,8 @@ fun PantallaEscaneo(estado: EstadoUi, vm: LectorViewModel) {
     val lote = estado.lote ?: return
     var linterna by rememberSaveable { mutableStateOf(false) }
     var manual by rememberSaveable { mutableStateOf("") }
+    var recuadro by rememberSaveable { mutableFloatStateOf(Recuadro.INICIAL) }
+    var zoom by rememberSaveable { mutableFloatStateOf(0f) }
 
     // Se escanea con el celular en la mano durante minutos: que no se apague la pantalla.
     val vista = LocalView.current
@@ -82,6 +88,9 @@ fun PantallaEscaneo(estado: EstadoUi, vm: LectorViewModel) {
                 estabilizador = vm.estabilizador,
                 alLeer = vm::alLeer,
                 modifier = Modifier.fillMaxSize(),
+                recuadro = recuadro,
+                zoom = zoom,
+                alCambiarZoom = { zoom = it },
             )
             Text(
                 estado.flujo.indicacion,
@@ -95,6 +104,30 @@ fun PantallaEscaneo(estado: EstadoUi, vm: LectorViewModel) {
             if (estado.ocupado) {
                 CircularProgressIndicator(Modifier.align(Alignment.Center))
             }
+        }
+
+        // Con zoom se lee desde más lejos, donde la cámara sí enfoca: de muy
+        // cerca la cámara principal de muchos celulares no llega a enfocar.
+        // También se pellizca sobre la imagen; tocarla enfoca ahí.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Zoom", style = MaterialTheme.typography.bodySmall, modifier = Modifier.width(64.dp))
+            Slider(
+                value = zoom,
+                onValueChange = { zoom = it },
+                modifier = Modifier.weight(1f),
+            )
+        }
+
+        // Achicarlo deja afuera los otros códigos de la etiqueta (el del trafo
+        // suele estar pegado a barras de P/N); al máximo lee toda la imagen.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Recuadro", style = MaterialTheme.typography.bodySmall, modifier = Modifier.width(64.dp))
+            Slider(
+                value = recuadro,
+                onValueChange = { recuadro = it },
+                valueRange = Recuadro.MINIMO..Recuadro.MAXIMO,
+                modifier = Modifier.weight(1f),
+            )
         }
 
         estado.aviso?.let { a ->

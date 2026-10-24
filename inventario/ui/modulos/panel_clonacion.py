@@ -10,20 +10,25 @@ corre en segundo plano, así la ventana no se congela mientras el SSH responde.
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QFormLayout,
+    QHBoxLayout,
     QLineEdit,
     QPlainTextEdit,
     QSpinBox,
     QVBoxLayout,
 )
 
-from ...nucleo import fog, remoto
-from ...nucleo.lotes import cargar_lote_activo, etiqueta_lote
-from .. import avisos, tema
-from ..tareas import con_espera
+from ...nucleo import fog, remoto, sincronizacion
+from ...nucleo.lotes import cargar_lote_activo, esta_cerrado, etiqueta_lote, regenerar_lote
+from .. import avisos, reporte_vivo, tema
+from ..tareas import con_espera, en_segundo_plano
 from ..widgets import Banner, agregar_fila, boton, etiqueta, fila_botones, tabla
+
+# Cada cuánto se trae lo nuevo del servidor mientras el panel está abierto.
+_INTERVALO_TRAER_MS = 15_000
 
 
 def _seriales_recibidos(llegados):
@@ -70,8 +75,30 @@ class PanelClonacion(QDialog):
         # Fila aparte para las acciones de FOG: así no compite por ancho con la
         # de arriba y queda lista para sumar el botón de unicast al lado.
         layout.addLayout(
-            fila_botones(boton("🛰️ Multicast en FOG", self._crear_multicast, variante="envio"))
+            fila_botones(
+                boton("🛰️ Multicast en FOG", self._crear_multicast, variante="envio"),
+                boton("📡 Ver en vivo", self._ver_en_vivo, variante="ot"),
+            )
         )
+
+        # Traer automático: lo que mandan los equipos clonados entra solo a la
+        # OT local y su HTML se regenera, sin apretar "Traer y reconstruir".
+        fila_auto = QHBoxLayout()
+        self.chk_auto = QCheckBox("🔄 Traer automático (cada 15 s)")
+        self.chk_auto.setChecked(True)
+        self.chk_auto.toggled.connect(self._al_cambiar_auto)
+        self.lbl_auto = etiqueta("", "ayuda")
+        fila_auto.addWidget(self.chk_auto)
+        fila_auto.addWidget(self.lbl_auto, 1)
+        layout.insertLayout(2, fila_auto)
+
+        self._trayendo = False
+        self._cerrado = False
+        self._timer = QTimer(self)
+        self._timer.setInterval(_INTERVALO_TRAER_MS)
+        self._timer.timeout.connect(self._traer_auto)
+        self._timer.start()
+        QTimer.singleShot(0, self._traer_auto)
 
     # --- servidor ---------------------------------------------------------
     def _remoto(self, texto, tarea, titulo_error):
@@ -165,6 +192,92 @@ class PanelClonacion(QDialog):
             if fondo:
                 item.setBackground(QColor(tema.color(fondo)))
 
+    # --- traer automático -------------------------------------------------
+    def _al_cambiar_auto(self, activo):
+        if activo:
+            self._timer.start()
+            self._traer_auto()
+        else:
+            self._timer.stop()
+            self.lbl_auto.setText("Pausado: usá \"Traer y reconstruir\" para traer a mano.")
+
+    def _traer_auto(self):
+        """Una vuelta en segundo plano: sin modal, la ventana sigue usable."""
+        if self._trayendo or self._cerrado or not self.chk_auto.isChecked():
+            return
+        self._trayendo = True
+        en_segundo_plano(
+            remoto.con_conexion,
+            sincronizacion.consultar,
+            al_terminar=self._al_traer,
+            al_fallar=self._al_fallar_traer,
+        )
+
+    def _al_traer(self, res):
+        # Vuelve al hilo de la interfaz: acá se escribe, nunca en el de trabajo.
+        self._trayendo = False
+        if self._cerrado:
+            return
+        traido = self._aplicar_traido(res)
+        if traido is None:
+            self.lbl_auto.setText("Sin OT publicada.")
+            return
+        local, escritos = traido
+        if esta_cerrado(local["ruta"]):
+            self.lbl_auto.setText(
+                f"⚠️ {etiqueta_lote(local)} está cerrada en esta PC: no se trae nada."
+            )
+        else:
+            nuevos = f" · {escritos} equipo(s) nuevo(s) o actualizado(s)" if escritos else ""
+            self.lbl_auto.setText(f"Última vuelta {res['hora']}{nuevos}")
+
+    def _aplicar_traido(self, res):
+        """
+        Escribe lo que trajo sincronizacion.consultar() y pinta la tabla.
+        Devuelve (lote local, equipos escritos), o None sin OT publicada. Una
+        OT cerrada en esta PC no se toca.
+        """
+        if res is None:
+            self.lote, self.llegados, self.esperados = None, [], []
+            self._pintar()
+            return None
+        lote = res["lote"]
+        local = sincronizacion.lote_local(lote)
+        escritos = 0
+        if not esta_cerrado(local["ruta"]):
+            escritos = sincronizacion.aplicar(lote, res["huellas"], res["contenidos"])
+        self.lote, self.esperados = lote, res["esperados"]
+        self.llegados = sincronizacion.equipos_locales(lote, res["huellas"])
+        self._pintar()
+        if escritos:
+            self._refrescar_menu()
+        return local, escritos
+
+    def _al_fallar_traer(self, exc):
+        self._trayendo = False
+        if not self._cerrado:
+            primera = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
+            self.lbl_auto.setText(f"⚠️ Sin conexión con el servidor, se reintenta: {primera}")
+
+    def _refrescar_menu(self):
+        inicio = getattr(self.parent(), "inicio", None)
+        if inicio is not None:
+            inicio.refrescar()
+
+    def _ver_en_vivo(self):
+        if not self.lote:
+            avisos.aviso(self, "Sin OT", "No hay OT publicada.")
+            return
+        local = sincronizacion.lote_local(self.lote)
+        if not reporte_vivo.abrir_lote(local):
+            avisos.error(self, "Reporte en vivo", "No se pudo abrir el reporte en vivo.")
+
+    def done(self, resultado):
+        # Una vuelta que todavía corre no escribe nada al terminar.
+        self._cerrado = True
+        self._timer.stop()
+        super().done(resultado)
+
     # --- acciones ---------------------------------------------------------
     def _publicar(self):
         lote = cargar_lote_activo()
@@ -229,24 +342,47 @@ class PanelClonacion(QDialog):
         dlg.exec()
 
     def _traer_y_reconstruir(self):
+        """
+        Lo mismo que el traer automático, a pedido y con aviso. Antes bajaba
+        TODO del servidor y pisaba lo local: un cargador cargado acá o desde el
+        celular se perdía y lo quitado a mano volvía. Ahora baja solo lo nuevo
+        o lo que cambió allá, y regenera el HTML y el FUSIONADO aunque no haya
+        nada nuevo (sirve también para rearmar un reporte roto).
+        """
         if not self.lote:
             avisos.aviso(self, "Sin OT", "No hay OT publicada.")
             return
-        lote = self.lote
-        res = self._remoto(
+        # Envuelto en un dict: _remoto devuelve None cuando falla, y consultar
+        # devuelve None cuando no hay OT publicada; hay que distinguirlos.
+        datos = self._remoto(
             "Trayendo los JSON del servidor…",
-            lambda c: remoto.descargar_equipos_remotos(c, lote),
+            lambda c: {"res": sincronizacion.consultar(c)},
             "No se pudo traer",
         )
-        if res is None:
+        if datos is None:
             return
-        bajados, total = res
+        traido = self._aplicar_traido(datos["res"])
+        if traido is None:
+            avisos.aviso(self, "Sin OT", "Ya no hay OT publicada en el servidor.")
+            return
+        local, escritos = traido
+        if esta_cerrado(local["ruta"]):
+            avisos.aviso(
+                self,
+                "OT cerrada",
+                f"{etiqueta_lote(local)} está cerrada en esta PC: no se trajo nada.\n\n"
+                "Reabrila desde \"Nueva OT\" si tiene que recibir más equipos.",
+            )
+            return
+        total = regenerar_lote(local)
         avisos.info(
             self,
             "Reconstrucción lista",
-            f"Se trajeron {bajados} JSON del servidor.\n\n"
-            f"La OT quedó con {total} equipo(s) y su HTML y JSON FUSIONADO ya se "
-            f"regeneraron en:\n{lote['ruta']}",
+            f"Se trajeron {escritos} equipo(s) nuevo(s) o actualizado(s) del servidor.\n"
+            "Lo cargado en esta PC (cargadores, correcciones) no se pisó y lo "
+            "quitado a mano no volvió.\n\n"
+            f"La OT quedó con {total} equipo(s) y su HTML y JSON FUSIONADO se "
+            f"regeneraron en:\n{local['ruta']}",
         )
 
     def _cerrar_remoto(self):

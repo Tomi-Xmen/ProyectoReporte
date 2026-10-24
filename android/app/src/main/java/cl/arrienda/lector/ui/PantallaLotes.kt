@@ -1,5 +1,6 @@
 package cl.arrienda.lector.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -26,6 +28,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import cl.arrienda.lector.data.Movimientos
@@ -39,6 +43,17 @@ fun PantallaLotes(estado: EstadoUi, vm: LectorViewModel) {
             TextButton(onClick = { vm.cargarLotes() }, enabled = !estado.ocupado) { Text("Actualizar") }
         }
         estado.mensaje?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        estado.aviso?.let { a ->
+            Text(
+                a.texto,
+                color = Color(0xFF111827),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(colorNivel(a.nivel))
+                    .padding(12.dp),
+            )
+        }
         if (estado.pendientes.isNotEmpty()) {
             Text("📵 ${estado.pendientes.size} escaneo(s) sin enviar: se reintentan desde el lote.")
         }

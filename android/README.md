@@ -13,9 +13,37 @@ FUSIONADO de siempre.
 3. Elegir una OT/guía abierta o crear una nueva.
 4. Elegir qué se escanea y apuntar a la etiqueta:
    - **Notebook + cargador** (guiado): notebook, después su cargador, y así.
+   - **Cargador → elegir equipo**: se escanea el cargador y la app muestra
+     los notebooks del lote (primero los que no tienen cargador) para tocar a
+     cuál va. Si ya era de otro equipo, pasa al elegido y el otro queda sin
+     cargador.
    - **Notebooks**, **Monitores**, **Impresoras**: uno tras otro.
    - **Cargadores en ráfaga**: cada cargador va al siguiente notebook sin
      cargador, en el orden en que se escanearon.
+
+## Gestión del lote desde el celular
+
+Tocando un equipo de la lista se abre su ficha, editable (hardware, datos,
+revisión de componentes). Además:
+
+- **🔌 Escanear cargador**: vuelve a la cámara y el próximo cargador leído va
+  a ESE equipo (si era de otro, se le pasa). **✕ Dejar sin cargador** y
+  Guardar lo saca.
+- **↔️ Mover**: pasa el equipo a otro lote abierto, con todo lo cargado.
+- **🗑️ Quitar**: lo saca del lote. No se borra: queda en
+  `Reportes_Guardados/_PAPELERA` del PC.
+
+En la pantalla de escaneo, **Lote ⋯**:
+
+- **Guía / OT del lote**: carga o corrige el segundo documento (la guía de una
+  entrega, la OT de un retiro) y se aplica a TODOS los equipos, también a los
+  ya escaneados.
+- **Cerrar el lote**: muestra antes lo que falta (guía/OT sin cargar,
+  notebooks sin cargador, equipos con fallas) y cierra igual que "Cerrar OT"
+  del PC, con backup.
+
+Las acciones sobre el equipo se bloquean mientras la ficha tenga cambios sin
+guardar.
 
 Solo se leen los códigos que caen dentro del recuadro de la cámara. Su
 tamaño se cambia con el deslizador **Recuadro**: achicarlo sirve para las
@@ -48,7 +76,8 @@ app/src/test/  tests JVM (sin celular)
 ```
 
 La lógica que decide (qué es un serial, a qué lote va, duplicados) vive en el
-PC (`inventario/nucleo/escaneos.py`); la app solo lee, pregunta y muestra.
+PC (`inventario/nucleo/escaneos.py` y `gestion_lote.py`); la app solo lee,
+pregunta y muestra.
 
 ## Contrato con el PC
 

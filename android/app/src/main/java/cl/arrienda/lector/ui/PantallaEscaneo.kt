@@ -18,6 +18,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
@@ -45,6 +46,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import cl.arrienda.lector.data.EquipoLote
+import cl.arrienda.lector.data.EstadoLote
+import cl.arrienda.lector.data.Movimientos
 import cl.arrienda.lector.data.Tipos
 import cl.arrienda.lector.escaneo.Modo
 import cl.arrienda.lector.escaneo.Recuadro
@@ -57,6 +60,7 @@ fun PantallaEscaneo(estado: EstadoUi, vm: LectorViewModel) {
     var manual by rememberSaveable { mutableStateOf("") }
     var recuadro by rememberSaveable { mutableFloatStateOf(Recuadro.INICIAL) }
     var zoom by rememberSaveable { mutableFloatStateOf(0f) }
+    var opcionesLote by rememberSaveable { mutableStateOf(false) }
 
     // Se escanea con el celular en la mano durante minutos: que no se apague la pantalla.
     val vista = LocalView.current
@@ -70,6 +74,7 @@ fun PantallaEscaneo(estado: EstadoUi, vm: LectorViewModel) {
             TextButton(onClick = vm::volverALotes) { Text("‹ Lotes") }
             Text(lote.etiqueta, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
             Text("${lote.equipos.size}", style = MaterialTheme.typography.titleMedium)
+            TextButton(onClick = { opcionesLote = true }, enabled = !estado.ocupado) { Text("Lote ⋯") }
         }
 
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -84,7 +89,7 @@ fun PantallaEscaneo(estado: EstadoUi, vm: LectorViewModel) {
 
         Box(Modifier.fillMaxWidth().aspectRatio(4f / 3f).clip(RoundedCornerShape(16.dp))) {
             VistaCamara(
-                activo = !estado.ocupado && estado.pregunta == null,
+                activo = !estado.ocupado && estado.pregunta == null && !opcionesLote,
                 linterna = linterna,
                 estabilizador = vm.estabilizador,
                 alLeer = vm::alLeer,
@@ -146,7 +151,9 @@ fun PantallaEscaneo(estado: EstadoUi, vm: LectorViewModel) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             OutlinedButton(onClick = { linterna = !linterna }) { Text(if (linterna) "🔦 Apagar" else "🔦 Luz") }
             OutlinedButton(onClick = vm::leerDeNuevo) { Text("↻ Releer") }
-            if (estado.flujo.modo == Modo.GUIADO && estado.flujo.equipoGuiado != null) {
+            if (estado.flujo.cargadorPara != null) {
+                OutlinedButton(onClick = vm::cancelarCargadorPara) { Text("Cancelar cargador") }
+            } else if (estado.flujo.modo == Modo.GUIADO && estado.flujo.equipoGuiado != null) {
                 OutlinedButton(onClick = vm::saltarCargador) { Text("Sin cargador") }
             }
         }
@@ -176,6 +183,54 @@ fun PantallaEscaneo(estado: EstadoUi, vm: LectorViewModel) {
             items(lote.equipos.asReversed()) { e -> FilaEquipo(e) { vm.abrirEquipo(e.serial) } }
         }
     }
+
+    if (opcionesLote) {
+        DialogoOpcionesLote(lote, vm) { opcionesLote = false }
+    }
+}
+
+/**
+ * Lo que se hace sobre el lote entero: completar su segundo documento (la
+ * guía de una entrega, la OT de un retiro) y cerrarlo.
+ */
+@Composable
+private fun DialogoOpcionesLote(lote: EstadoLote, vm: LectorViewModel, cerrar: () -> Unit) {
+    val esEntrega = lote.mov == Movimientos.ENTREGA
+    var numeroSec by rememberSaveable(lote.numeroSec) { mutableStateOf(lote.numeroSec) }
+    AlertDialog(
+        onDismissRequest = cerrar,
+        title = { Text(lote.etiqueta) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = numeroSec,
+                    onValueChange = { numeroSec = it },
+                    label = { Text(if (esEntrega) "N° de guía de despacho" else "N° de OT") },
+                    supportingText = { Text("Se aplica a todos los equipos del lote, también a los ya escaneados.") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Button(
+                    onClick = {
+                        vm.fijarDocumento(numeroSec)
+                        cerrar()
+                    },
+                    enabled = numeroSec.trim() != lote.numeroSec,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(if (esEntrega) "Guardar guía" else "Guardar OT") }
+                HorizontalDivider()
+                OutlinedButton(
+                    onClick = {
+                        vm.pedirCierre()
+                        cerrar()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("📦 Cerrar el lote…") }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = cerrar) { Text("Volver") } },
+    )
 }
 
 @Composable

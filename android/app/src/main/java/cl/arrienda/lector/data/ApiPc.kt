@@ -66,6 +66,24 @@ class ApiPc(
     suspend fun escanear(pedido: PedidoEscaneo): Resultado<RespuestaEscaneo> =
         pedir("POST", "/escaneo", json.encodeToString(PedidoEscaneo.serializer(), pedido), RespuestaEscaneo.serializer())
 
+    // Gestión del lote. Si un reintento llega después de que el PC ya lo hizo,
+    // responde 404/409 (el equipo ya no está, el lote ya está cerrado): la app
+    // lo muestra como mensaje y nada se hace dos veces.
+    suspend fun mover(pedido: PedidoMover): Resultado<RespuestaAccion> =
+        pedir("POST", "/equipo/mover", json.encodeToString(PedidoMover.serializer(), pedido), RespuestaAccion.serializer())
+
+    suspend fun quitar(lote: LoteRef, serial: String): Resultado<RespuestaAccion> =
+        pedir("POST", "/equipo/quitar", json.encodeToString(PedidoEquipo.serializer(), PedidoEquipo(lote, serial)), RespuestaAccion.serializer())
+
+    suspend fun documento(lote: LoteRef, numeroSec: String): Resultado<EstadoLote> =
+        pedir("POST", "/lote/documento", json.encodeToString(PedidoDocumento.serializer(), PedidoDocumento(lote, numeroSec)), EstadoLote.serializer())
+
+    suspend fun resumenCierre(lote: LoteRef): Resultado<ResumenCierre> =
+        pedir("POST", "/lote/resumen", json.encodeToString(PedidoLote.serializer(), PedidoLote(lote)), ResumenCierre.serializer())
+
+    suspend fun cerrar(lote: LoteRef): Resultado<RespuestaCierre> =
+        pedir("POST", "/lote/cerrar", json.encodeToString(PedidoLote.serializer(), PedidoLote(lote)), RespuestaCierre.serializer())
+
     private suspend fun <T> pedir(
         metodo: String,
         ruta: String,

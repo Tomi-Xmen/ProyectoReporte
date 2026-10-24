@@ -7,9 +7,12 @@ import cl.arrienda.lector.data.ErrorApi
 import cl.arrienda.lector.data.EstadoLote
 import cl.arrienda.lector.data.EstadoPc
 import cl.arrienda.lector.data.FichaEquipo
+import cl.arrienda.lector.data.RespuestaAccion
+import cl.arrienda.lector.data.RespuestaCierre
 import cl.arrienda.lector.data.RespuestaClientes
 import cl.arrienda.lector.data.RespuestaEscaneo
 import cl.arrienda.lector.data.RespuestaLotes
+import cl.arrienda.lector.data.ResumenCierre
 import cl.arrienda.lector.escaneo.Nivel
 import cl.arrienda.lector.escaneo.describir
 import cl.arrienda.lector.escaneo.nivel
@@ -140,6 +143,56 @@ class ContratoTest {
         assertEquals("cambiado", cuerpo("equipo_cambiado", ErrorApi.serializer()).error)
         assertEquals(409, codigo("equipo_transformador_duplicado"))
         assertEquals("duplicado", cuerpo("equipo_transformador_duplicado", ErrorApi.serializer()).error)
+    }
+
+    @Test
+    fun `cargador leido y pasado de un equipo a otro`() {
+        val libre = escaneo("escaneo_leido_libre")
+        assertEquals("leido", libre.estado)
+        assertEquals("TR-0100", libre.snTransf)
+        assertNull(libre.equipo)
+        assertEquals(Nivel.PREGUNTA, nivel(libre))
+
+        val leido = escaneo("escaneo_leido")
+        assertEquals("5CD805DVNV", leido.equipo)
+        assertTrue("5CD805DVNV" in describir(leido))
+
+        val pasado = escaneo("escaneo_reasignado")
+        assertEquals("asignado", pasado.estado)
+        assertEquals("5CD805ABCD", pasado.equipo)
+        assertEquals("5CD805DVNV", pasado.desde)
+        assertEquals("TR-0003", pasado.reemplazo)
+        assertTrue("era de 5CD805DVNV" in describir(pasado))
+    }
+
+    @Test
+    fun `gestion del lote`() {
+        val resumen = cuerpo("lote_resumen", ResumenCierre.serializer())
+        assertEquals(3, resumen.equipos)
+        assertEquals(listOf("5CD805DVNV"), resumen.sinCargador)
+        assertNull(resumen.faltaDocumento)
+
+        val conGuia = cuerpo("lote_documento", EstadoLote.serializer())
+        assertEquals("G-10", conGuia.numeroSec)
+        assertEquals(400, codigo("lote_documento_invalido"))
+
+        val movido = cuerpo("equipo_mover", RespuestaAccion.serializer())
+        assertEquals("movido", movido.estado)
+        assertEquals("MON12345", movido.serial)
+        assertTrue(movido.destino!!.startsWith("BETA"))
+        assertEquals("mismo_lote", cuerpo("equipo_mover_mismo_lote", ErrorApi.serializer()).error)
+
+        val quitado = cuerpo("equipo_quitar", RespuestaAccion.serializer())
+        assertEquals("quitado", quitado.estado)
+        assertEquals(1, quitado.total)
+        assertEquals(404, codigo("equipo_quitar_inexistente"))
+
+        val cerrado = cuerpo("lote_cerrar", RespuestaCierre.serializer())
+        assertEquals("cerrado", cerrado.estado)
+        assertEquals(1, cerrado.total)
+        assertTrue(cerrado.backup!!.endsWith(".zip"))
+        assertEquals(409, codigo("lote_cerrado_resumen"))
+        assertEquals("lote", cuerpo("lote_cerrado_resumen", ErrorApi.serializer()).error)
     }
 
     @Test

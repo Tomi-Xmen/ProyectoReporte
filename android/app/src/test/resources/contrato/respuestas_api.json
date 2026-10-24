@@ -258,5 +258,581 @@
       "descartes": [],
       "lote": "ACME · OT-553 · ENTREGAS"
     }
+  },
+  "equipo": {
+    "codigo": 200,
+    "cuerpo": {
+      "serial": "5CD805DVNV",
+      "tipo": "Notebook",
+      "version": "f50db19ceb92",
+      "sin_hardware": false,
+      "tiene_fallas": false,
+      "datos": {
+        "modelo": "HP EliteBook 840",
+        "sn_win": "AAAAA-BBBBB",
+        "sn_transf": "TR-0009",
+        "office": "",
+        "sn_app": "",
+        "obs": ""
+      },
+      "revisado": false,
+      "componentes": [
+        {
+          "nombre": "Carcaza",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Pantalla",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Teclado",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Touchpad",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Puertos USB",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Puertos Video",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Ethernet/Wi-Fi",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Placa base",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Memoria",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Disco duro",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Batería",
+          "estado": "OK",
+          "obs": ""
+        }
+      ],
+      "fecha": "01/01/2026 10:00",
+      "hardware": {
+        "host": "PC",
+        "cpu": "Intel i5",
+        "bateria": "90%",
+        "ram": [
+          "8GB|3200|PC4|Kingston|PN1"
+        ],
+        "discos": [
+          {
+            "desc": "SSD 256GB",
+            "serial": "DISCO-01"
+          }
+        ],
+        "red": []
+      },
+      "opciones": {
+        "estados": [
+          "OK",
+          "OBS",
+          "MALO"
+        ],
+        "office": [
+          "2013",
+          "2016",
+          "2019",
+          "2021",
+          "2024",
+          "365"
+        ]
+      }
+    }
+  },
+  "equipo_sin_hardware": {
+    "codigo": 200,
+    "cuerpo": {
+      "serial": "MON12345",
+      "tipo": "Monitor",
+      "version": "49c0ee57f30b",
+      "sin_hardware": true,
+      "tiene_fallas": false,
+      "datos": {
+        "modelo": "Monitor",
+        "sn_win": "",
+        "sn_transf": "",
+        "office": "",
+        "sn_app": "",
+        "obs": ""
+      },
+      "revisado": false,
+      "componentes": [
+        {
+          "nombre": "Carcaza",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Pantalla",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Teclado",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Touchpad",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Puertos USB",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Puertos Video",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Ethernet/Wi-Fi",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Placa base",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Memoria",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Disco duro",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Batería",
+          "estado": "OK",
+          "obs": ""
+        }
+      ],
+      "fecha": "24/10/2026 01:09",
+      "hardware": {
+        "host": "",
+        "cpu": "",
+        "bateria": "",
+        "ram": [],
+        "discos": [],
+        "red": []
+      },
+      "opciones": {
+        "estados": [
+          "OK",
+          "OBS",
+          "MALO"
+        ],
+        "office": [
+          "2013",
+          "2016",
+          "2019",
+          "2021",
+          "2024",
+          "365"
+        ]
+      }
+    }
+  },
+  "equipo_inexistente": {
+    "codigo": 404,
+    "cuerpo": {
+      "error": "equipo",
+      "mensaje": "NOEXISTE1 no está en el lote."
+    }
+  },
+  "equipo_editado": {
+    "codigo": 200,
+    "cuerpo": {
+      "serial": "5CD805DVNV",
+      "tipo": "Notebook",
+      "version": "70f80294e48a",
+      "sin_hardware": false,
+      "tiene_fallas": false,
+      "datos": {
+        "modelo": "HP EliteBook 840",
+        "sn_win": "AAAAA-BBBBB",
+        "sn_transf": "TR-0009",
+        "office": "",
+        "sn_app": "",
+        "obs": "Rayón en tapa"
+      },
+      "revisado": false,
+      "componentes": [
+        {
+          "nombre": "Carcaza",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Pantalla",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Teclado",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Touchpad",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Puertos USB",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Puertos Video",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Ethernet/Wi-Fi",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Placa base",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Memoria",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Disco duro",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Batería",
+          "estado": "OK",
+          "obs": ""
+        }
+      ],
+      "fecha": "01/01/2026 10:00",
+      "hardware": {
+        "host": "PC",
+        "cpu": "Intel i5",
+        "bateria": "90%",
+        "ram": [
+          "8GB|3200|PC4|Kingston|PN1"
+        ],
+        "discos": [
+          {
+            "desc": "SSD 256GB",
+            "serial": "DISCO-01"
+          }
+        ],
+        "red": []
+      },
+      "opciones": {
+        "estados": [
+          "OK",
+          "OBS",
+          "MALO"
+        ],
+        "office": [
+          "2013",
+          "2016",
+          "2019",
+          "2021",
+          "2024",
+          "365"
+        ]
+      }
+    }
+  },
+  "equipo_cambiado": {
+    "codigo": 409,
+    "cuerpo": {
+      "error": "cambiado",
+      "mensaje": "El equipo cambió en el PC mientras lo editabas. Volvé a abrirlo."
+    }
+  },
+  "equipo_hardware_editado": {
+    "codigo": 200,
+    "cuerpo": {
+      "serial": "5CD805DVNV",
+      "tipo": "Notebook",
+      "version": "9724057d387f",
+      "sin_hardware": false,
+      "tiene_fallas": false,
+      "datos": {
+        "modelo": "HP EliteBook 840",
+        "sn_win": "AAAAA-BBBBB",
+        "sn_transf": "TR-0009",
+        "office": "",
+        "sn_app": "",
+        "obs": "Rayón en tapa"
+      },
+      "revisado": false,
+      "componentes": [
+        {
+          "nombre": "Carcaza",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Pantalla",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Teclado",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Touchpad",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Puertos USB",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Puertos Video",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Ethernet/Wi-Fi",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Placa base",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Memoria",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Disco duro",
+          "estado": "OK",
+          "obs": ""
+        },
+        {
+          "nombre": "Batería",
+          "estado": "OK",
+          "obs": ""
+        }
+      ],
+      "fecha": "01/01/2026 10:00",
+      "hardware": {
+        "host": "NB-01",
+        "cpu": "Intel i7",
+        "bateria": "80%",
+        "ram": [
+          "8GB | 2400 | PC4 | Kingston | KPN1"
+        ],
+        "discos": [
+          {
+            "desc": "SSD 500GB",
+            "serial": "AB1234"
+          }
+        ],
+        "red": [
+          "Intel Wi-Fi | MAC: 00:11"
+        ]
+      },
+      "opciones": {
+        "estados": [
+          "OK",
+          "OBS",
+          "MALO"
+        ],
+        "office": [
+          "2013",
+          "2016",
+          "2019",
+          "2021",
+          "2024",
+          "365"
+        ]
+      }
+    }
+  },
+  "equipo_transformador_duplicado": {
+    "codigo": 409,
+    "cuerpo": {
+      "error": "duplicado",
+      "mensaje": "El transformador TR-0009 ya es de 5CD805DVNV."
+    }
+  },
+  "escaneo_leido_libre": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "leido",
+      "sn_transf": "TR-0100",
+      "equipo": null,
+      "descartes": [],
+      "lote": "ACME · OT-553 · ENTREGAS"
+    }
+  },
+  "escaneo_leido": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "leido",
+      "sn_transf": "TR-0009",
+      "equipo": "5CD805DVNV",
+      "descartes": [],
+      "lote": "ACME · OT-553 · ENTREGAS"
+    }
+  },
+  "escaneo_reasignado": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "asignado",
+      "sn_transf": "TR-0009",
+      "equipo": "5CD805ABCD",
+      "reemplazo": "TR-0003",
+      "desde": "5CD805DVNV",
+      "descartes": [],
+      "lote": "ACME · OT-553 · ENTREGAS"
+    }
+  },
+  "lote_resumen": {
+    "codigo": 200,
+    "cuerpo": {
+      "etiqueta": "ACME · OT-553 · ENTREGAS",
+      "equipos": 3,
+      "sin_cargador": [
+        "5CD805DVNV"
+      ],
+      "con_fallas": 0,
+      "falta_documento": null
+    }
+  },
+  "lote_documento": {
+    "codigo": 200,
+    "cuerpo": {
+      "mov": "Entrega",
+      "cliente": "ACME",
+      "numero": "553",
+      "numero_sec": "G-10",
+      "etiqueta": "ACME · OT-553 · ENTREGAS",
+      "equipos": [
+        {
+          "serial": "5CD805ABCD",
+          "tipo": "Notebook",
+          "modelo": "HP EliteBook 840",
+          "sn_transf": "TR-0009",
+          "sin_hardware": false
+        },
+        {
+          "serial": "5CD805DVNV",
+          "tipo": "Notebook",
+          "modelo": "HP EliteBook 840",
+          "sn_transf": null,
+          "sin_hardware": false
+        },
+        {
+          "serial": "MON12345",
+          "tipo": "Monitor",
+          "modelo": "Monitor",
+          "sn_transf": null,
+          "sin_hardware": true
+        }
+      ]
+    }
+  },
+  "lote_documento_invalido": {
+    "codigo": 400,
+    "cuerpo": {
+      "error": "dato",
+      "mensaje": "Número inválido.\n\nSolo letras, números, '-' y '_'."
+    }
+  },
+  "equipo_mover": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "movido",
+      "serial": "MON12345",
+      "destino": "BETA · GUIA-77 · RETIROS",
+      "total": 2
+    }
+  },
+  "equipo_mover_mismo_lote": {
+    "codigo": 400,
+    "cuerpo": {
+      "error": "mismo_lote",
+      "mensaje": "El destino es el mismo lote."
+    }
+  },
+  "equipo_quitar": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "quitado",
+      "serial": "5CD805DVNV",
+      "total": 1
+    }
+  },
+  "equipo_quitar_inexistente": {
+    "codigo": 404,
+    "cuerpo": {
+      "error": "equipo",
+      "mensaje": "NOEXISTE1 no está en ACME · OT-553 · ENTREGAS."
+    }
+  },
+  "lote_cerrar": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "cerrado",
+      "etiqueta": "ACME · OT-553 · ENTREGAS",
+      "total": 1,
+      "backup": "Backup_2026-10-24_01-09-01_cierre.zip"
+    }
+  },
+  "lote_cerrado_resumen": {
+    "codigo": 409,
+    "cuerpo": {
+      "error": "lote",
+      "titulo": "Lote cerrado",
+      "mensaje": "ACME · OT-553 · ENTREGAS ya está cerrado."
+    }
   }
 }

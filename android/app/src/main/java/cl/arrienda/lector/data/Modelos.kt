@@ -118,6 +118,10 @@ data class PedidoEscaneo(
     val tipo: String? = null,
     @SerialName("serial_equipo") val serialEquipo: String? = null,
     val forzar: Boolean? = null,
+    /** Cargador: que el PC diga qué se leyó y de quién es, sin asignarlo (estado "leido"). */
+    @SerialName("solo_leer") val soloLeer: Boolean? = null,
+    /** Con [serialEquipo]: pasarlo a ese equipo aunque hoy sea de otro. */
+    val reasignar: Boolean? = null,
 )
 
 @Serializable
@@ -135,6 +139,8 @@ data class RespuestaEscaneo(
     @SerialName("sn_transf") val snTransf: String? = null,
     val equipo: String? = null,
     val reemplazo: String? = null,
+    /** "asignado" con reasignar: el equipo que tenía el cargador antes. */
+    val desde: String? = null,
     val candidatos: List<String> = emptyList(),
     val valor: String? = null,
     val esperado: String? = null,
@@ -144,3 +150,135 @@ data class RespuestaEscaneo(
 
 @Serializable
 data class ErrorApi(val error: String = "", val titulo: String? = null, val mensaje: String = "")
+
+// ── Ficha de un equipo (ver inventario/nucleo/fichas.py) ──────────────
+
+@Serializable
+data class PedidoEquipo(val lote: LoteRef, val serial: String)
+
+@Serializable
+data class Disco(val desc: String = "", val serial: String = "")
+
+/** RAM: un módulo por línea, "8GB | 2400 | PC4 | Fabricante | P/N" (el formato del escaneo). */
+@Serializable
+data class HardwareEquipo(
+    val host: String = "",
+    val cpu: String = "",
+    val bateria: String = "",
+    val ram: List<String> = emptyList(),
+    val discos: List<Disco> = emptyList(),
+    val red: List<String> = emptyList(),
+)
+
+@Serializable
+data class Componente(val nombre: String, val estado: String, val obs: String = "")
+
+/** Lo editable, con los "no cargado" (PENDIENTE, Sin observaciones…) como texto vacío. */
+@Serializable
+data class DatosEquipo(
+    val modelo: String = "",
+    @SerialName("sn_win") val snWin: String = "",
+    @SerialName("sn_transf") val snTransf: String = "",
+    val office: String = "",
+    @SerialName("sn_app") val snApp: String = "",
+    val obs: String = "",
+)
+
+@Serializable
+data class OpcionesFicha(val estados: List<String>, val office: List<String>)
+
+@Serializable
+data class FichaEquipo(
+    val serial: String,
+    val tipo: String,
+    /** Huella del JSON: si cambió en el PC desde que se abrió, guardar da 409. */
+    val version: String,
+    @SerialName("sin_hardware") val sinHardware: Boolean = false,
+    @SerialName("tiene_fallas") val tieneFallas: Boolean = false,
+    val datos: DatosEquipo,
+    /** false: el equipo no tenía revisión y [componentes] es la grilla en OK para cargarla. */
+    val revisado: Boolean = false,
+    val componentes: List<Componente> = emptyList(),
+    val fecha: String = "",
+    val hardware: HardwareEquipo = HardwareEquipo(),
+    val opciones: OpcionesFicha,
+)
+
+/** Solo los campos tocados: el PC no pisa lo que el celular no cambió. */
+@Serializable
+data class CambiosEquipo(
+    val modelo: String? = null,
+    @SerialName("sn_win") val snWin: String? = null,
+    @SerialName("sn_transf") val snTransf: String? = null,
+    val office: String? = null,
+    @SerialName("sn_app") val snApp: String? = null,
+    val obs: String? = null,
+    val componentes: List<Componente>? = null,
+    /** El hardware viaja entero: el PC rearma todas sus filas del reporte a la vez. */
+    val hardware: HardwareEquipo? = null,
+) {
+    val vacio get() = this == CambiosEquipo()
+
+    companion object {
+        fun entre(
+            antes: FichaEquipo,
+            datos: DatosEquipo,
+            componentes: List<Componente>,
+            hardware: HardwareEquipo,
+        ) = CambiosEquipo(
+            modelo = datos.modelo.takeIf { it != antes.datos.modelo },
+            snWin = datos.snWin.takeIf { it != antes.datos.snWin },
+            snTransf = datos.snTransf.takeIf { it != antes.datos.snTransf },
+            office = datos.office.takeIf { it != antes.datos.office },
+            snApp = datos.snApp.takeIf { it != antes.datos.snApp },
+            obs = datos.obs.takeIf { it != antes.datos.obs },
+            componentes = componentes.takeIf { it != antes.componentes },
+            hardware = hardware.takeIf { it != antes.hardware },
+        )
+    }
+}
+
+@Serializable
+data class PedidoEditar(
+    val lote: LoteRef,
+    val serial: String,
+    val version: String,
+    val cambios: CambiosEquipo,
+)
+
+// ── Gestión del lote (ver inventario/nucleo/gestion_lote.py) ──────────
+
+@Serializable
+data class PedidoMover(val lote: LoteRef, val serial: String, val destino: LoteRef)
+
+/** El documento que la carpeta no codifica: la guía de una entrega, la OT de un retiro. */
+@Serializable
+data class PedidoDocumento(val lote: LoteRef, @SerialName("numero_sec") val numeroSec: String)
+
+/** Respuesta de mover ("movido") y quitar ("quitado") un equipo. */
+@Serializable
+data class RespuestaAccion(
+    val estado: String,
+    val serial: String? = null,
+    val destino: String? = null,
+    val total: Int? = null,
+)
+
+/** Lo que conviene mirar antes de cerrar el lote. */
+@Serializable
+data class ResumenCierre(
+    val etiqueta: String,
+    val equipos: Int,
+    @SerialName("sin_cargador") val sinCargador: List<String> = emptyList(),
+    @SerialName("con_fallas") val conFallas: Int = 0,
+    /** "guía" u "OT" si el lote no tiene cargado su segundo documento. */
+    @SerialName("falta_documento") val faltaDocumento: String? = null,
+)
+
+@Serializable
+data class RespuestaCierre(
+    val estado: String,
+    val etiqueta: String,
+    val total: Int,
+    val backup: String? = null,
+)

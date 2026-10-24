@@ -6,8 +6,10 @@ import cl.arrienda.lector.data.Tipos
 import cl.arrienda.lector.escaneo.Flujo
 import cl.arrienda.lector.escaneo.Modo
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FlujoTest {
@@ -47,6 +49,34 @@ class FlujoTest {
         assertEquals(Tipos.TRANSFORMADOR, rafaga.esperado)
         assertNull(rafaga.serialEquipo) // en ráfaga el PC elige el equipo
         assertEquals(rafaga, rafaga.trasRespuesta(r("asignado")))
+    }
+
+    @Test
+    fun `cargador y elegir equipo solo lee`() {
+        val f = Flujo(Modo.CARGADOR_ELEGIR)
+        assertEquals(Tipos.TRANSFORMADOR, f.esperado)
+        assertTrue(f.soloLeer)
+        assertNull(f.serialEquipo) // el equipo lo elige el usuario después
+        assertEquals(f, f.trasRespuesta(r("asignado", tipo = null)))
+        assertFalse(Flujo(Modo.GUIADO).soloLeer)
+        assertFalse(Flujo(Modo.TRANSFORMADOR).soloLeer)
+    }
+
+    @Test
+    fun `cargador pedido desde la ficha vale para una lectura`() {
+        // Se estaba en guiado esperando el cargador de otro notebook.
+        val antes = Flujo(Modo.GUIADO, equipoGuiado = "5CD805DVNV")
+        val f = antes.paraCargadorDe("5CD805ABCD")
+        assertEquals(Tipos.TRANSFORMADOR, f.esperado)
+        assertTrue(f.soloLeer)
+        assertNull(f.serialEquipo)
+        assertTrue("5CD805ABCD" in f.indicacion)
+
+        // "leido" no lo termina: falta asignarlo. "asignado" sí, y se vuelve a como estaba.
+        assertEquals(f, f.trasRespuesta(r("leido", tipo = null)))
+        assertEquals(antes, f.trasRespuesta(r("asignado", tipo = null)))
+        assertEquals(antes, f.sinCargadorPara())
+        assertNull(f.conModo(Modo.NOTEBOOK).cargadorPara)
     }
 
     @Test

@@ -99,6 +99,65 @@ def _generar():
         "escaneo_otro_tipo": escaneo("5CD805XXXX", esperado="Transformador"),
         "escaneo_sin_tipo": escaneo("QWE12345"),
     }
+
+    def equipo(serial):
+        return pedir("POST", "/api/v1/equipo", {"lote": LOTE, "serial": serial})
+
+    def editar(serial, version, cambios):
+        datos = {"lote": LOTE, "serial": serial, "version": version, "cambios": cambios}
+        return pedir("POST", "/api/v1/equipo/editar", datos)
+
+    casos["equipo"] = equipo("5CD805DVNV")
+    casos["equipo_sin_hardware"] = equipo("MON12345")
+    casos["equipo_inexistente"] = equipo("NOEXISTE1")
+    version = casos["equipo"]["cuerpo"]["version"]
+    casos["equipo_editado"] = editar("5CD805DVNV", version, {"obs": "Rayón en tapa"})
+    casos["equipo_cambiado"] = editar("5CD805DVNV", version, {"obs": "Otra cosa"})
+    hw = {
+        "host": "NB-01",
+        "cpu": "Intel i7",
+        "bateria": "80%",
+        "ram": ["8GB | 2400 | PC4 | Kingston | KPN1"],
+        "discos": [{"desc": "SSD 500GB", "serial": "AB1234"}],
+        "red": ["Intel Wi-Fi | MAC: 00:11"],
+    }
+    casos["equipo_hardware_editado"] = editar(
+        "5CD805DVNV", casos["equipo_editado"]["cuerpo"]["version"], {"hardware": hw}
+    )
+    # TR-0009 ya es de 5CD805DVNV (lo asignaron los escaneos de arriba).
+    casos["equipo_transformador_duplicado"] = editar(
+        "5CD805ABCD", equipo("5CD805ABCD")["cuerpo"]["version"], {"sn_transf": "TR-0009"}
+    )
+
+    # ── Gestión del lote (nucleo/gestion_lote.py) ──
+    # Cargador: leerlo sin asignar, y pasarlo de un equipo a otro.
+    casos["escaneo_leido_libre"] = escaneo("TR-0100", esperado="Transformador", solo_leer=True)
+    casos["escaneo_leido"] = escaneo("TR-0009", esperado="Transformador", solo_leer=True)
+    casos["escaneo_reasignado"] = escaneo(
+        "TR-0009", tipo="Transformador", serial_equipo="5CD805ABCD", reasignar=True
+    )
+    casos["lote_resumen"] = pedir("POST", "/api/v1/lote/resumen", {"lote": LOTE})
+    casos["lote_documento"] = pedir(
+        "POST", "/api/v1/lote/documento", {"lote": LOTE, "numero_sec": "G-10"}
+    )
+    casos["lote_documento_invalido"] = pedir(
+        "POST", "/api/v1/lote/documento", {"lote": LOTE, "numero_sec": "CON"}
+    )
+    beta = {"mov": "Retiro", "cliente": "BETA", "numero": "77"}
+    casos["equipo_mover"] = pedir(
+        "POST", "/api/v1/equipo/mover", {"lote": LOTE, "serial": "MON12345", "destino": beta}
+    )
+    casos["equipo_mover_mismo_lote"] = pedir(
+        "POST", "/api/v1/equipo/mover", {"lote": LOTE, "serial": "5CD805ABCD", "destino": LOTE}
+    )
+    casos["equipo_quitar"] = pedir(
+        "POST", "/api/v1/equipo/quitar", {"lote": LOTE, "serial": "5CD805DVNV"}
+    )
+    casos["equipo_quitar_inexistente"] = pedir(
+        "POST", "/api/v1/equipo/quitar", {"lote": LOTE, "serial": "NOEXISTE1"}
+    )
+    casos["lote_cerrar"] = pedir("POST", "/api/v1/lote/cerrar", {"lote": LOTE})
+    casos["lote_cerrado_resumen"] = pedir("POST", "/api/v1/lote/resumen", {"lote": LOTE})
     return casos
 
 
@@ -118,7 +177,7 @@ def test_contrato_con_la_app(carpeta):
     assert {
         "registrado", "ya_estaba", "en_otra_ot", "asignado", "duplicado",
         "equipo_no_encontrado", "sin_equipo_pendiente", "elegir", "sin_serial",
-        "otro_tipo", "sin_tipo",
+        "otro_tipo", "sin_tipo", "leido", "movido", "quitado", "cerrado",
     } <= estados
 
     if os.environ.get("REGENERAR_CONTRATO") == "1":

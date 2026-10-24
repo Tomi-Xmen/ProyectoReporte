@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...nucleo.api_celular import ApiCelular, describir_respuesta
-from .. import avisos
+from .. import avisos, reporte_vivo
 from ..servidor_celular import ServidorCelular, interfaces_locales
 from ..widgets import Banner, boton, etiqueta, tabla
 
@@ -127,7 +127,12 @@ class PanelCelular(QDialog):
             "Copia lo mismo que trae el QR. Sirve para probar con "
             "herramientas/simular_celular.py sin la app."
         )
-        for w in (self.lbl_qr, self.lbl_url, self.lbl_contacto, self.btn_copiar):
+        self.btn_vivo = boton("📡 Reportes en vivo", self._abrir_en_vivo, variante="ot")
+        self.btn_vivo.setToolTip(
+            "Abre en el navegador los reportes de las OT abiertas: se "
+            "actualizan solos con cada escaneo del celular."
+        )
+        for w in (self.lbl_qr, self.lbl_url, self.lbl_contacto, self.btn_copiar, self.btn_vivo):
             lateral.addWidget(w)
         lateral.addStretch(1)
         centro.addLayout(lateral, 1)
@@ -223,6 +228,10 @@ class PanelCelular(QDialog):
             else "No se puede dibujar el QR (falta la librería 'segno'). "
             "Copiá los datos con el botón."
         )
+
+    def _abrir_en_vivo(self):
+        if not reporte_vivo.abrir_indice():
+            avisos.error(self, "Reporte en vivo", "No se pudo abrir el reporte en vivo.")
 
     def _copiar(self):
         if self.api and self.servidor and self._ip():

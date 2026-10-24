@@ -264,7 +264,7 @@
     "cuerpo": {
       "serial": "5CD805DVNV",
       "tipo": "Notebook",
-      "version": "c10db9c59226",
+      "version": "f50db19ceb92",
       "sin_hardware": false,
       "tiene_fallas": false,
       "datos": {
@@ -371,7 +371,7 @@
     "cuerpo": {
       "serial": "MON12345",
       "tipo": "Monitor",
-      "version": "a21ab2ce9c43",
+      "version": "49c0ee57f30b",
       "sin_hardware": true,
       "tiene_fallas": false,
       "datos": {
@@ -440,7 +440,7 @@
           "obs": ""
         }
       ],
-      "fecha": "16/10/2026 15:24",
+      "fecha": "24/10/2026 01:09",
       "hardware": {
         "host": "",
         "cpu": "",
@@ -478,7 +478,7 @@
     "cuerpo": {
       "serial": "5CD805DVNV",
       "tipo": "Notebook",
-      "version": "f22c1a6dedd6",
+      "version": "70f80294e48a",
       "sin_hardware": false,
       "tiene_fallas": false,
       "datos": {
@@ -592,7 +592,7 @@
     "cuerpo": {
       "serial": "5CD805DVNV",
       "tipo": "Notebook",
-      "version": "726a66942086",
+      "version": "9724057d387f",
       "sin_hardware": false,
       "tiene_fallas": false,
       "datos": {
@@ -701,6 +701,138 @@
     "cuerpo": {
       "error": "duplicado",
       "mensaje": "El transformador TR-0009 ya es de 5CD805DVNV."
+    }
+  },
+  "escaneo_leido_libre": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "leido",
+      "sn_transf": "TR-0100",
+      "equipo": null,
+      "descartes": [],
+      "lote": "ACME · OT-553 · ENTREGAS"
+    }
+  },
+  "escaneo_leido": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "leido",
+      "sn_transf": "TR-0009",
+      "equipo": "5CD805DVNV",
+      "descartes": [],
+      "lote": "ACME · OT-553 · ENTREGAS"
+    }
+  },
+  "escaneo_reasignado": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "asignado",
+      "sn_transf": "TR-0009",
+      "equipo": "5CD805ABCD",
+      "reemplazo": "TR-0003",
+      "desde": "5CD805DVNV",
+      "descartes": [],
+      "lote": "ACME · OT-553 · ENTREGAS"
+    }
+  },
+  "lote_resumen": {
+    "codigo": 200,
+    "cuerpo": {
+      "etiqueta": "ACME · OT-553 · ENTREGAS",
+      "equipos": 3,
+      "sin_cargador": [
+        "5CD805DVNV"
+      ],
+      "con_fallas": 0,
+      "falta_documento": null
+    }
+  },
+  "lote_documento": {
+    "codigo": 200,
+    "cuerpo": {
+      "mov": "Entrega",
+      "cliente": "ACME",
+      "numero": "553",
+      "numero_sec": "G-10",
+      "etiqueta": "ACME · OT-553 · ENTREGAS",
+      "equipos": [
+        {
+          "serial": "5CD805ABCD",
+          "tipo": "Notebook",
+          "modelo": "HP EliteBook 840",
+          "sn_transf": "TR-0009",
+          "sin_hardware": false
+        },
+        {
+          "serial": "5CD805DVNV",
+          "tipo": "Notebook",
+          "modelo": "HP EliteBook 840",
+          "sn_transf": null,
+          "sin_hardware": false
+        },
+        {
+          "serial": "MON12345",
+          "tipo": "Monitor",
+          "modelo": "Monitor",
+          "sn_transf": null,
+          "sin_hardware": true
+        }
+      ]
+    }
+  },
+  "lote_documento_invalido": {
+    "codigo": 400,
+    "cuerpo": {
+      "error": "dato",
+      "mensaje": "Número inválido.\n\nSolo letras, números, '-' y '_'."
+    }
+  },
+  "equipo_mover": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "movido",
+      "serial": "MON12345",
+      "destino": "BETA · GUIA-77 · RETIROS",
+      "total": 2
+    }
+  },
+  "equipo_mover_mismo_lote": {
+    "codigo": 400,
+    "cuerpo": {
+      "error": "mismo_lote",
+      "mensaje": "El destino es el mismo lote."
+    }
+  },
+  "equipo_quitar": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "quitado",
+      "serial": "5CD805DVNV",
+      "total": 1
+    }
+  },
+  "equipo_quitar_inexistente": {
+    "codigo": 404,
+    "cuerpo": {
+      "error": "equipo",
+      "mensaje": "NOEXISTE1 no está en ACME · OT-553 · ENTREGAS."
+    }
+  },
+  "lote_cerrar": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "cerrado",
+      "etiqueta": "ACME · OT-553 · ENTREGAS",
+      "total": 1,
+      "backup": "Backup_2026-10-24_01-09-01_cierre.zip"
+    }
+  },
+  "lote_cerrado_resumen": {
+    "codigo": 409,
+    "cuerpo": {
+      "error": "lote",
+      "titulo": "Lote cerrado",
+      "mensaje": "ACME · OT-553 · ENTREGAS ya está cerrado."
     }
   }
 }

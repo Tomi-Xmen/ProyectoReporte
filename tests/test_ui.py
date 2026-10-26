@@ -60,6 +60,59 @@ def test_dialogo_nuevo_lote(app, carpeta, sin_modales):
     assert lotes.listar_lotes_abiertos()[0]["cliente"] == "ACME_LTDA"
 
 
+def test_dialogo_requerimiento_solo_en_entrega(app, carpeta, sin_modales):
+    from inventario.ui.dialogos import DialogoNuevoLote
+
+    dlg = DialogoNuevoLote(None, "Entrega")
+    assert dlg.requerimiento.isVisibleTo(dlg)
+    dlg.combo_cli.setCurrentText("Acme")
+    dlg.entry_num.setText("553")
+    dlg.requerimiento.combo_cpu.setCurrentText("i5")
+    dlg.requerimiento.combo_ram.setCurrentText("16")
+    dlg.requerimiento.combo_tipo.setCurrentText("SSD")
+    dlg._confirmar()
+    assert lotes.requerimiento_en_disco(dlg.lote["ruta"]) == {
+        "cpu": "i5",
+        "ram_gb": 16,
+        "disco_tipo": "SSD",
+    }
+
+    dlg.combo_mov.setCurrentText("Retiro")
+    assert not dlg.requerimiento.isVisibleTo(dlg)
+
+
+def test_formulario_avisa_equipo_distinto(app, carpeta, sin_modales, monkeypatch):
+    from inventario.ui.ventana_principal import PaginaFormulario, VentanaPrincipal
+
+    lote = lotes.hacer_lote("Entrega", "ACME", "553")
+    lote["requerimiento"] = {"ram_gb": 16, "office": True}
+    lotes.abrir_lote(lote)
+    form = PaginaFormulario(VentanaPrincipal(), datos_equipo("E1"), lote)
+    assert "DISTINTO A LO PEDIDO" in form.banner_req.text()
+    assert "RAM: tiene 8 GB" in form.banner_req.text()
+    assert "Office" in form.banner_req.text()
+
+    # Marcar Office saca esa diferencia en el momento.
+    form.office.chk.setChecked(True)
+    assert "Office" not in form.banner_req.text()
+
+    # Si no se confirma, no se guarda.
+    preguntas = []
+    monkeypatch.setattr(
+        avisos, "confirmar", lambda _p, titulo, _t: preguntas.append(titulo) or False
+    )
+    form._guardar()
+    assert preguntas == ["Equipo distinto a lo pedido"]
+    assert lotes.leer_equipos_lote(lote) == []
+
+
+def test_formulario_sin_requerimiento_no_muestra_tarjeta(app, lote_con_equipos):
+    from inventario.ui.ventana_principal import PaginaFormulario, VentanaPrincipal
+
+    form = PaginaFormulario(VentanaPrincipal(), datos_equipo("E2"), lote_con_equipos)
+    assert form.tarjeta_req is None
+
+
 def test_formulario_guarda_equipo(app, lote_con_equipos, sin_modales):
     from inventario.ui.ventana_principal import PaginaFormulario, VentanaPrincipal
 

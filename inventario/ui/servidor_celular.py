@@ -20,9 +20,11 @@ from PySide6.QtNetwork import QAbstractSocket, QHostAddress, QNetworkInterface, 
 from ..nucleo.api_celular import es_red_local, ip_principal
 
 PUERTO_DEFAULT = 8765
-# Si el puerto está ocupado se prueban los siguientes; el firewall de Windows
-# autoriza al programa, no al puerto, así que cambiarlo no pide permiso otra vez.
+# Si el puerto está ocupado se prueban los siguientes, siempre dentro de
+# PUERTO_DEFAULT..+9: el firewall de Windows autoriza al programa, pero uno
+# por puerto (ufw en Linux) abre esa ventana y nada fuera de ella.
 _PUERTOS_A_PROBAR = 10
+PUERTOS_LECTOR = range(PUERTO_DEFAULT, PUERTO_DEFAULT + _PUERTOS_A_PROBAR)
 _MAX_CABECERAS = 8 * 1024
 _MAX_CUERPO = 64 * 1024
 _TIMEOUT_MS = 10_000
@@ -158,8 +160,19 @@ class ServidorCelular(QObject):
         return self._servidor.serverPort() if self.activo else None
 
     def iniciar(self, puerto=PUERTO_DEFAULT):
-        """Escucha en todas las interfaces IPv4. Devuelve el puerto, o None si no pudo."""
-        candidatos = [0] if puerto == 0 else range(puerto, puerto + _PUERTOS_A_PROBAR)
+        """
+        Escucha en todas las interfaces IPv4. Devuelve el puerto, o None si no pudo.
+
+        'puerto' es el preferido (el de la última vez, así el celular emparejado
+        vuelve solo); si está ocupado o fuera de PUERTOS_LECTOR se busca desde
+        PUERTO_DEFAULT. Antes se buscaba desde el preferido y, guardado de nuevo
+        cada vez, el puerto se iba corriendo hasta salir del rango del firewall.
+        """
+        if puerto == 0:
+            candidatos = [0]
+        else:
+            preferido = [puerto] if puerto in PUERTOS_LECTOR else []
+            candidatos = preferido + [p for p in PUERTOS_LECTOR if p != puerto]
         cualquiera = QHostAddress(QHostAddress.SpecialAddress.AnyIPv4)
         for p in candidatos:
             if self._servidor.listen(cualquiera, p):

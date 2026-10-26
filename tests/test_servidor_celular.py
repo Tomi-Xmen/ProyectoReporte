@@ -109,6 +109,23 @@ def servidor(app):
     srv.detener()
 
 
+def test_puerto_guardado_no_se_sale_del_rango_del_lector(app):
+    # Un puerto guardado fuera del rango (lo dejaba la búsqueda vieja, que
+    # partía del último) no se reusa: el firewall solo abre PUERTOS_LECTOR.
+    from inventario.ui.servidor_celular import PUERTOS_LECTOR
+
+    afuera = ServidorCelular(ApiCelular(token="secreto", reglas=[]))
+    adentro = ServidorCelular(ApiCelular(token="secreto", reglas=[]))
+    try:
+        assert afuera.iniciar(PUERTOS_LECTOR.stop + 7) in PUERTOS_LECTOR
+        # Uno guardado dentro del rango se respeta si está libre.
+        libre = next(p for p in PUERTOS_LECTOR if p != afuera.puerto)
+        assert adentro.iniciar(libre) == libre
+    finally:
+        afuera.detener()
+        adentro.detener()
+
+
 def test_servidor_responde_y_exige_token(app, servidor, lote_con_equipos):
     puerto = servidor.puerto
     contactos = []

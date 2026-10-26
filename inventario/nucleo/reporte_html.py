@@ -63,6 +63,7 @@ HTML_START = r"""<!DOCTYPE html>
   .tag-entrega{background:#22c55e;color:#fff;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700}
   .tag-retiro{background:#f97316;color:#fff;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700}
   .tag-falla{background:#ef4444;color:#fff;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700;margin-left:8px}
+  .tag-req{background:#f59e0b;color:#fff;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700;margin-left:8px}
   .logistics-row{background:#f8fafc}
 
   .content{padding:20px 22px;border-top:1px solid #f1f5f9}
@@ -78,6 +79,8 @@ HTML_START = r"""<!DOCTYPE html>
   .obs-row td,.obs-row th{color:#854d0e;font-weight:600;font-style:italic}
   .falla-row{background:#fee2e2!important}
   .falla-row td,.falla-row th{color:#991b1b;font-weight:600}
+  .req-row{background:#fef3c7!important}
+  .req-row td,.req-row th{color:#92400e;font-weight:600}
   .office-row{background:#eff6ff}
   .office-row td,.office-row th{color:#1e40af}
 </style>
@@ -579,6 +582,8 @@ def construir_entry_html(
     fusion_json="",
     tag_falla_html="",
     falla_html="",
+    tag_req_html="",
+    req_html="",
     btn_imprimir="",
     office_html="",
     bateria_html="",
@@ -587,7 +592,7 @@ def construir_entry_html(
     return f"""<details id="{safe_id}" data-comps='{comps_json}' data-fusion='{fusion_json}' open>
 <summary>
   <span class="model-name">{model}</span>
-  <span style="font-size:12px;opacity:.85">S/N: {serial} &nbsp;|&nbsp; 📅 {fecha} {tag_falla_html}</span>
+  <span style="font-size:12px;opacity:.85">S/N: {serial} &nbsp;|&nbsp; 📅 {fecha} {tag_falla_html}{tag_req_html}</span>
 </summary>
 <div class="content">
   <div class="content-header">
@@ -598,7 +603,7 @@ def construir_entry_html(
     <tr class="logistics-row"><th>Tipo Movimiento</th><td><b>{mov}</b></td></tr>
     <tr class="logistics-row"><th>N° de Guía</th><td><b>{guia_final}</b></td></tr>
     <tr class="logistics-row"><th>N° de OT</th><td><b>{num_ot}</b></td></tr>
-    {falla_html}
+    {falla_html}{req_html}
     <tr class="obs-row"><th>⚠️ Obs. General</th><td>{obs_final}</td></tr>
     {office_html}
     <tr><th>Número de Serie</th><td class="serial-tag">{serial}</td></tr>
@@ -696,7 +701,12 @@ def filas_hardware_desde_json(jdata):
     return ram_html, disk_html, net_html
 
 
-def reconstruir_entry_desde_json(jdata):
+def reconstruir_entry_desde_json(jdata, diferencias_req=None):
+    """
+    Entrada <details> del equipo. 'diferencias_req' son las diferencias con
+    el requerimiento de la OT (requerimiento.diferencias_equipo): no están en
+    el JSON, las aporta quien conoce el lote.
+    """
     data = jdata.get("DATA") or {}
     obs_final = jdata.get("OBS", "Sin observaciones")
     guia_final = jdata.get("GUIA_ID", "Sin Guía")
@@ -750,6 +760,17 @@ def reconstruir_entry_desde_json(jdata):
             f"onclick=\"imprimirEtiqueta('{safe_id}')\">🖨️ Etiqueta Individual</button>"
         )
 
+    tag_req_html = ""
+    req_html = ""
+    if diferencias_req:
+        tag_req_html = '<span class="tag-req">DISTINTO A LO PEDIDO</span>'
+        # El th no puede incluir 'Office' ni 'Obs. General': extraerDatos() lo
+        # tomaría por esas filas al copiar a Valida.
+        detalle = "<br>".join(html.escape(d) for d in diferencias_req)
+        req_html = (
+            f'<tr class="req-row"><th>📋 Distinto a lo pedido</th><td>{detalle}</td></tr>'
+        )
+
     comps_json = html.escape(json.dumps(detalle_componentes))
     fusion_json = html.escape(json.dumps(resumen_fusionado(jdata)))
 
@@ -788,6 +809,8 @@ def reconstruir_entry_desde_json(jdata):
         fusion_json=fusion_json,
         tag_falla_html=tag_falla_html,
         falla_html=falla_html,
+        tag_req_html=tag_req_html,
+        req_html=req_html,
         btn_imprimir=btn_imprimir,
         office_html=office_html,
         bateria_html=bateria_html,

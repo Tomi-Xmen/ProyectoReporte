@@ -14,6 +14,7 @@ inventario/
     config.py          servidor SCP, carpeta base, librerías opcionales
     escaner.py         script de PowerShell y lectura del hardware
     lotes.py           OT/guías en disco: guardar, cerrar, mover, backups
+    requerimiento.py   specs pedidas en una entrega y aviso si un equipo difiere
     escaneos.py        lector celular: elegir el serial y aplicarlo al lote
     gestion_lote.py    lector celular: cargadores, mover/quitar, guía/OT, cierre
     api_celular.py     lector celular: qué responde el PC a cada pedido

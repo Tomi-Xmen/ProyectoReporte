@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..nucleo import config, lotes
+from ..nucleo import config, lotes, requerimiento
 from ..nucleo.escaner import get_inventory_fast
 from ..nucleo.lotes import MOV_CFG, carpeta_lote, etiqueta_lote
 from . import acciones, avisos
@@ -26,7 +26,7 @@ from .componentes import COMPONENTES, RevisionComponentes, SeccionOffice
 from .dialogos import nuevo_lote
 from .modulos import celular, etiquetas, mover_ot, panel_clonacion, transformadores
 from .tareas import en_segundo_plano
-from .widgets import Tarjeta, TarjetaAccion, area_scroll, boton, etiqueta
+from .widgets import Banner, Tarjeta, TarjetaAccion, area_scroll, boton, etiqueta
 
 
 _DESC_CELULAR = "Usá el celular como lector de códigos en las OT y guías."
@@ -299,6 +299,23 @@ class PaginaFormulario(QWidget):
         )
         cuerpo.addWidget(destino)
 
+        # Lo que el cliente pidió para esta OT, contra lo que se acaba de
+        # escanear. Se lee del disco: el lote activo no lo trae.
+        self.req = lotes.requerimiento_en_disco(lote["ruta"])
+        self.tarjeta_req = self.banner_req = None
+        if self.req:
+            self.tarjeta_req = Tarjeta()
+            self.tarjeta_req.cuerpo.addWidget(
+                etiqueta("📋 REQUERIMIENTO DEL CLIENTE", "seccion")
+            )
+            texto = requerimiento.resumen(self.req)
+            if self.req.get("nota"):
+                texto = f"{texto}\n📝 {self.req['nota']}" if texto else f"📝 {self.req['nota']}"
+            self.tarjeta_req.cuerpo.addWidget(etiqueta(texto, "subtitulo", ajustar=True))
+            self.banner_req = Banner()
+            self.tarjeta_req.cuerpo.addWidget(self.banner_req)
+            cuerpo.addWidget(self.tarjeta_req)
+
         # La revisión de componentes solo aplica a retiros.
         self.revision = None
         if lote["mov"] == "Retiro":
@@ -328,10 +345,37 @@ class PaginaFormulario(QWidget):
             tamano="grande",
         )
         layout.addWidget(btn_guardar)
+        if self.req:
+            self.office.chk.toggled.connect(self._refrescar_req)
+            self._refrescar_req()
         self.entry_obs.setFocus()
+
+    def _diferencias_req(self):
+        return requerimiento.comparar(self.req, self.data, self.office.valores()[0])
+
+    def _refrescar_req(self, *_):
+        difs = self._diferencias_req()
+        if difs:
+            self.banner_req.fijar(
+                "⚠️ ESTE EQUIPO ES DISTINTO A LO PEDIDO\n" + "\n".join(difs), "error"
+            )
+        else:
+            self.banner_req.fijar("✅ Coincide con lo pedido", "ok")
+        self.tarjeta_req.fijar_estado("aviso" if difs else "ok")
 
     def _guardar(self):
         data, lote = self.data, self.lote
+        # Distinto a lo pedido no bloquea (puede haber un cambio acordado con
+        # el cliente), pero no se guarda sin que alguien lo confirme.
+        difs = self._diferencias_req() if self.req else []
+        if difs and not avisos.confirmar(
+            self,
+            "Equipo distinto a lo pedido",
+            "Este equipo no coincide con el requerimiento de la OT:\n\n"
+            + "\n".join(f"• {d}" for d in difs)
+            + "\n\n¿Guardarlo igual?",
+        ):
+            return
         # En una entrega no se revisan componentes, pero el JSON los lleva
         # todos en OK, igual que siempre.
         detalle = self.revision.detalle() if self.revision else [

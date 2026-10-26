@@ -15,7 +15,9 @@ from .lotes import (
     hacer_lote,
     numero_sec_en_disco,
     regenerar_lote,
+    requerimiento_en_disco,
 )
+from .requerimiento import diferencias_equipo
 from .reporte_html import (
     HTML_END,
     HTML_START,
@@ -142,10 +144,15 @@ def _reconstruir_carpeta_suelta(carpeta):
             "<title>Inventario Maestro</title>", f"<title>{titulo}</title>"
         )
 
+        # Solo las entregas llevan requerimiento; viene en el '.lote' si la
+        # carpeta se bajó entera del servidor.
+        req = requerimiento_en_disco(carpeta) if tipo == "Entregas" else {}
         entries = []
         for jdata in equipos:
             try:
-                entries.append(reconstruir_entry_desde_json(jdata))
+                entries.append(
+                    reconstruir_entry_desde_json(jdata, diferencias_equipo(req, jdata))
+                )
             except Exception as e:
                 errores.append(f"S/N {jdata.get('SERIAL', '?')}: {e}")
 

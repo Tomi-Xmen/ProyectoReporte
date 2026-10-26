@@ -6,7 +6,15 @@ import os
 from datetime import datetime
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QComboBox, QDialog, QFormLayout, QLineEdit, QVBoxLayout
+from PySide6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QFormLayout,
+    QLineEdit,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ..nucleo.lotes import (
     MOV_CFG,
@@ -22,14 +30,95 @@ from ..nucleo.lotes import (
     normalizar_numero,
     reabrir_lote,
 )
+from ..nucleo import requerimiento
 from . import avisos
 from .widgets import agregar_fila, boton, etiqueta, fila_botones, tabla
+
+
+def _combo(opciones, editable=False):
+    combo = QComboBox()
+    combo.setEditable(editable)
+    combo.addItems(opciones)
+    return combo
 
 
 def _encabezado(layout, titulo, subtitulo=None):
     layout.addWidget(etiqueta(titulo, "titulo-dialogo"))
     if subtitulo:
         layout.addWidget(etiqueta(subtitulo, "subtitulo", ajustar=True))
+
+
+class SeccionRequerimiento(QWidget):
+    """
+    Specs que el cliente pidió para la entrega. Todo es opcional: lo que queda
+    en "Cualquiera" no se compara contra los equipos escaneados.
+    """
+
+    def __init__(self):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 6, 0, 0)
+        layout.setSpacing(8)
+        layout.addWidget(etiqueta("📋 REQUERIMIENTO DEL CLIENTE", "seccion"))
+        layout.addWidget(
+            etiqueta(
+                "Opcional. Al escanear, la app avisa si un equipo es distinto a esto.",
+                "subtitulo",
+                ajustar=True,
+            )
+        )
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(8)
+
+        self.combo_cpu = _combo(
+            ["Cualquiera", "i3", "i5", "i7", "i9", "Ryzen 3", "Ryzen 5", "Ryzen 7", "Ultra 5", "Ultra 7"],
+            editable=True,
+        )
+        self.combo_cpu.setToolTip("Palabras que deben estar en el nombre del procesador")
+        self.spin_gen = QSpinBox()
+        self.spin_gen.setRange(0, 20)
+        self.spin_gen.setSpecialValueText("Cualquiera")
+        self.spin_gen.setSuffix("ª gen")
+        form.addRow(etiqueta("Procesador:", "campo"), self.combo_cpu)
+        form.addRow(etiqueta("Generación:", "campo"), self.spin_gen)
+
+        self.combo_ram = _combo(["Cualquiera", "4", "8", "16", "32", "64"], editable=True)
+        self.combo_ram.setToolTip("GB de RAM en total")
+        form.addRow(etiqueta("RAM (GB):", "campo"), self.combo_ram)
+
+        self.combo_disco = _combo(
+            ["Cualquiera", "128", "256", "512", "1 TB", "2 TB"], editable=True
+        )
+        self.combo_disco.setToolTip("Tamaño de alguno de los discos (±10%)")
+        form.addRow(etiqueta("Disco (GB):", "campo"), self.combo_disco)
+
+        self.combo_tipo = _combo(["Cualquiera", *requerimiento.TIPOS_DISCO])
+        form.addRow(etiqueta("Tipo de disco:", "campo"), self.combo_tipo)
+
+        self.combo_office = _combo(["Cualquiera", "Sí", "No"])
+        form.addRow(etiqueta("Office:", "campo"), self.combo_office)
+
+        self.entry_nota = QLineEdit()
+        self.entry_nota.setPlaceholderText("Ej: con cargador original, Windows 11 Pro")
+        form.addRow(etiqueta("Nota:", "campo"), self.entry_nota)
+        layout.addLayout(form)
+
+    def valores(self):
+        """Requerimiento normalizado ({} si no se pidió nada)."""
+        return requerimiento.normalizar(
+            {
+                "cpu": self.combo_cpu.currentText(),
+                "generacion": self.spin_gen.value(),
+                "ram_gb": self.combo_ram.currentText(),
+                "disco_gb": self.combo_disco.currentText(),
+                "disco_tipo": self.combo_tipo.currentText(),
+                "office": self.combo_office.currentText(),
+                "nota": self.entry_nota.text(),
+            }
+        )
 
 
 class DialogoNuevoLote(QDialog):
@@ -83,6 +172,9 @@ class DialogoNuevoLote(QDialog):
         form.addRow(self.lbl_sec, self.entry_sec)
         layout.addLayout(form)
 
+        self.requerimiento = SeccionRequerimiento()
+        layout.addWidget(self.requerimiento)
+
         self.lbl_prev = etiqueta("", "ruta", alinear=Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.lbl_prev)
 
@@ -105,6 +197,11 @@ class DialogoNuevoLote(QDialog):
         es_entrega = mov == "Entrega"
         self.lbl_num.setText("N° de OT:" if es_entrega else "N° de Guía:")
         self.lbl_sec.setText("N° de Guía:" if es_entrega else "N° de OT:")
+        # Solo la entrega lleva requerimiento: en un retiro el equipo vuelve
+        # como esté, no hay specs comprometidas que comparar.
+        if self.requerimiento.isVisibleTo(self) != es_entrega:
+            self.requerimiento.setVisible(es_entrega)
+            self.adjustSize()
         numero = normalizar_numero(self.entry_num.text(), mov)
         texto_cli = self.combo_cli.currentText()
         cliente = normalizar_cliente(texto_cli) if texto_cli.strip() else ""
@@ -135,6 +232,8 @@ class DialogoNuevoLote(QDialog):
             numero,
             numero_sec=normalizar_numero(self.entry_sec.text(), mov),
         )
+        if mov == "Entrega":
+            lote["requerimiento"] = self.requerimiento.valores()
 
         # Reabrir una OT ya cerrada es posible, pero nunca en silencio.
         if esta_cerrado(lote["ruta"]):

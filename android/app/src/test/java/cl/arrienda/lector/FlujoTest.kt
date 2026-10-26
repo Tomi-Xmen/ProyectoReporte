@@ -3,6 +3,7 @@ package cl.arrienda.lector
 import cl.arrienda.lector.data.Emparejamiento
 import cl.arrienda.lector.data.EquipoLote
 import cl.arrienda.lector.data.EstadoLote
+import cl.arrienda.lector.data.ParCargador
 import cl.arrienda.lector.data.Tipos
 import cl.arrienda.lector.escaneo.Flujo
 import cl.arrienda.lector.escaneo.Modo
@@ -33,6 +34,10 @@ class FlujoTest {
         )
         assertEquals("5CD0000002", proximoSinCargador(l))
         assertEquals("Escaneá el cargador de 5CD0000002", Flujo().indicacion(l))
+        // Los que ya están en la lista sin guardar no reciben otro cargador.
+        val lista = listOf(ParCargador("5CD0000002", "WHHRE0A1RK0002"))
+        assertEquals("5CD0000003", proximoSinCargador(l, lista))
+        assertNull(proximoSinCargador(l, lista + ParCargador("5CD0000003", "WHHRE0A1RK0003")))
         assertNull(proximoSinCargador(lote(EquipoLote("5CD0000001", Tipos.NOTEBOOK, snTransf = "W1"))))
         assertEquals("Todos los notebooks tienen cargador", Flujo().indicacion(lote()))
     }

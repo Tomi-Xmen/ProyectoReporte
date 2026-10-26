@@ -128,6 +128,17 @@ def _generar():
     casos["equipo_transformador_duplicado"] = editar(
         "5CD805ABCD", equipo("5CD805ABCD")["cuerpo"]["version"], {"sn_transf": "TR-0009"}
     )
+
+    # Lista de cargadores del celular: se revisan sin escribir y se guardan con botón.
+    lotes.guardar_equipo_general(lote, datos_equipo("5CD805NUEV"), "", False, "", "2016", [])
+
+    def cargadores(*pares):
+        datos = {"lote": LOTE, "pares": [{"serial": a, "sn_transf": b} for a, b in pares]}
+        return pedir("POST", "/api/v1/cargadores", datos)
+
+    casos["escaneo_borrador"] = escaneo("TR-0100", esperado="Transformador", borrador=True)
+    casos["cargadores_guardado"] = cargadores(("5CD805NUEV", "TR-0100"))
+    casos["cargadores_rechazado"] = cargadores(("NOEXISTE1", "TR-0101"))
     return casos
 
 

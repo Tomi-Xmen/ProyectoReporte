@@ -7,12 +7,16 @@ import cl.arrienda.lector.data.ErrorApi
 import cl.arrienda.lector.data.EstadoLote
 import cl.arrienda.lector.data.EstadoPc
 import cl.arrienda.lector.data.FichaEquipo
+import cl.arrienda.lector.data.ParCargador
+import cl.arrienda.lector.data.RespuestaCargadores
 import cl.arrienda.lector.data.RespuestaClientes
 import cl.arrienda.lector.data.RespuestaEscaneo
 import cl.arrienda.lector.data.RespuestaLotes
 import cl.arrienda.lector.escaneo.Nivel
+import cl.arrienda.lector.escaneo.Reenvio
 import cl.arrienda.lector.escaneo.describir
 import cl.arrienda.lector.escaneo.nivel
+import cl.arrienda.lector.escaneo.reenvio
 import kotlinx.serialization.DeserializationStrategy
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -93,6 +97,7 @@ class ContratoTest {
             "escaneo_registrado" to Nivel.OK,
             "escaneo_asignado" to Nivel.OK,
             "escaneo_rafaga" to Nivel.OK,
+            "escaneo_borrador" to Nivel.OK,
             "escaneo_ya_estaba" to Nivel.AVISO,
             "escaneo_transformador_ya_estaba" to Nivel.AVISO,
             "escaneo_en_otra_ot" to Nivel.PREGUNTA,
@@ -110,6 +115,42 @@ class ContratoTest {
             val texto = describir(resp)
             assertTrue("$caso sin texto propio: $texto", texto != resp.estado && "null" !in texto)
         }
+    }
+
+    @Test
+    fun `al reenviar un pendiente solo cuenta como enviado lo que quedo en el PC`() {
+        val esperados = mapOf(
+            "escaneo_registrado" to Reenvio.LISTO,
+            "escaneo_asignado" to Reenvio.LISTO,
+            "escaneo_ya_estaba" to Reenvio.LISTO,
+            "escaneo_transformador_ya_estaba" to Reenvio.LISTO,
+            "escaneo_borrador" to Reenvio.A_LA_LISTA,
+            "escaneo_en_otra_ot" to Reenvio.PREGUNTAR,
+            "escaneo_elegir" to Reenvio.PREGUNTAR,
+            "escaneo_otro_tipo" to Reenvio.PREGUNTAR,
+            "escaneo_sin_tipo" to Reenvio.PREGUNTAR,
+            "escaneo_duplicado" to Reenvio.FALLO,
+            "escaneo_equipo_no_encontrado" to Reenvio.FALLO,
+            "escaneo_sin_equipo_pendiente" to Reenvio.FALLO,
+            "escaneo_sin_serial" to Reenvio.FALLO,
+        )
+        for ((caso, r) in esperados) assertEquals(caso, r, reenvio(escaneo(caso)))
+    }
+
+    @Test
+    fun `lista de cargadores guardada o rechazada`() {
+        assertEquals("TR-0100", escaneo("escaneo_borrador").snTransf)
+        assertEquals("propuesto", escaneo("escaneo_borrador").estado)
+
+        val ok = cuerpo("cargadores_guardado", RespuestaCargadores.serializer())
+        assertEquals("guardado", ok.estado)
+        assertEquals(listOf(ParCargador("5CD805NUEV", "TR-0100")), ok.guardados)
+        assertEquals(1, ok.nuevos)
+
+        val no = cuerpo("cargadores_rechazado", RespuestaCargadores.serializer())
+        assertEquals("rechazado", no.estado)
+        assertEquals("TR-0101", no.errores.single().snTransf)
+        assertTrue(no.errores.single().motivo.isNotBlank())
     }
 
     @Test

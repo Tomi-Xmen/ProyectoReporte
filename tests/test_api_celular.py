@@ -183,3 +183,23 @@ def test_un_error_interno_no_revienta(api, lote_con_equipos, monkeypatch):
 )
 def test_es_red_local(ip, local):
     assert es_red_local(ip) is local
+
+
+def test_cargadores_en_borrador_y_guardar_con_boton(api, lote_con_equipos):
+    lote = {"mov": "Entrega", "cliente": "ACME", "numero": "553"}
+    codigo, r = pedir(api, "POST", "/api/v1/escaneo", {
+        "lote": lote, "lecturas": [{"texto": "TR-0001"}], "esperado": "Transformador", "borrador": True,
+    })
+    assert (codigo, r["estado"], r["sn_transf"]) == (200, "propuesto", "TR-0001")
+
+    codigo, r = pedir(api, "POST", "/api/v1/lote", {"lote": lote})
+    assert all(e["sn_transf"] is None for e in r["equipos"])  # el borrador no escribió
+
+    codigo, r = pedir(api, "POST", "/api/v1/cargadores", {
+        "lote": lote, "pares": [{"serial": "SN1", "sn_transf": "TR-0001"}],
+    })
+    assert (codigo, r["estado"], r["guardados"]) == (
+        200, "guardado", [{"serial": "SN1", "sn_transf": "TR-0001"}],
+    )
+    codigo, r = pedir(api, "POST", "/api/v1/lote", {"lote": lote})
+    assert {e["serial"]: e["sn_transf"] for e in r["equipos"]}["SN1"] == "TR-0001"

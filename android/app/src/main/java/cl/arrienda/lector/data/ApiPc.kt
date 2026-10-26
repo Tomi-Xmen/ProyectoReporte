@@ -66,6 +66,10 @@ class ApiPc(
     suspend fun escanear(pedido: PedidoEscaneo): Resultado<RespuestaEscaneo> =
         pedir("POST", "/escaneo", json.encodeToString(PedidoEscaneo.serializer(), pedido), RespuestaEscaneo.serializer())
 
+    /** Guarda la lista de cargadores; el PC relee lo escrito antes de contestar "guardado". */
+    suspend fun guardarCargadores(pedido: PedidoCargadores): Resultado<RespuestaCargadores> =
+        pedir("POST", "/cargadores", json.encodeToString(PedidoCargadores.serializer(), pedido), RespuestaCargadores.serializer())
+
     private suspend fun <T> pedir(
         metodo: String,
         ruta: String,

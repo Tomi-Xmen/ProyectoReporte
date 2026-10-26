@@ -15,6 +15,8 @@ import cl.arrienda.lector.data.HardwareEquipo
 import cl.arrienda.lector.data.Lectura
 import cl.arrienda.lector.data.LoteAbierto
 import cl.arrienda.lector.data.LoteRef
+import cl.arrienda.lector.data.ParCargador
+import cl.arrienda.lector.data.PedidoCargadores
 import cl.arrienda.lector.data.PedidoEditar
 import cl.arrienda.lector.data.PedidoEscaneo
 import cl.arrienda.lector.data.PedidoNuevoLote
@@ -24,8 +26,11 @@ import cl.arrienda.lector.escaneo.Estabilizador
 import cl.arrienda.lector.escaneo.Flujo
 import cl.arrienda.lector.escaneo.Modo
 import cl.arrienda.lector.escaneo.Nivel
+import cl.arrienda.lector.escaneo.Reenvio
 import cl.arrienda.lector.escaneo.describir
 import cl.arrienda.lector.escaneo.nivel
+import cl.arrienda.lector.escaneo.proximoSinCargador
+import cl.arrienda.lector.escaneo.reenvio
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -48,6 +53,7 @@ sealed interface Pregunta {
     data class OtroTipo(val valor: String, val tipo: String, val esperado: String, val base: PedidoEscaneo) : Pregunta
     data class SinTipo(val valor: String, val base: PedidoEscaneo) : Pregunta
     data class Reabrir(val mensaje: String, val pedido: PedidoNuevoLote) : Pregunta
+    data class SalirSinGuardar(val cantidad: Int) : Pregunta
 }
 
 data class EstadoUi(
@@ -62,6 +68,10 @@ data class EstadoUi(
     val aviso: Aviso? = null,
     val pregunta: Pregunta? = null,
     val ocupado: Boolean = false,
+    /** Cargadores leídos y emparejados que todavía NO están en el PC: se guardan con el botón. */
+    val borrador: List<ParCargador> = emptyList(),
+    /** Por qué el PC rechazó cada cargador de la lista (clave: serial del cargador). */
+    val erroresBorrador: Map<String, String> = emptyMap(),
     /** Escaneos que no llegaron al PC; se reenvían con su mismo id. */
     val pendientes: List<PedidoEscaneo> = emptyList(),
     /** Mensaje para las pantallas fuera del escaneo (errores de conexión, validación). */
@@ -230,6 +240,7 @@ class LectorViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(
                 pantalla = Pantalla.ESCANEAR, lote = lote, flujo = Flujo(), aviso = null,
                 pregunta = null, ocupado = false, mensaje = null,
+                borrador = emptyList(), erroresBorrador = emptyMap(),
             )
         }
     }
@@ -260,7 +271,18 @@ class LectorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun volverALotes() {
+        val pendientes = estado.value.borrador.size
+        if (pendientes > 0) {
+            actualizar { it.copy(pregunta = Pregunta.SalirSinGuardar(pendientes)) }
+            return
+        }
+        salirALotes()
+    }
+
+    /** Sale del lote aunque queden cargadores sin guardar (se pierden). */
+    fun salirALotes() {
         estabilizador.olvidar()
+        actualizar { it.copy(pregunta = null, borrador = emptyList(), erroresBorrador = emptyMap()) }
         cargarLotes()
     }
 
@@ -275,6 +297,7 @@ class LectorViewModel(app: Application) : AndroidViewModel(app) {
                 lote = lote.ref,
                 lecturas = lecturas,
                 esperado = s.flujo.esperado,
+                borrador = if (s.flujo.modo == Modo.TRANSFORMADOR) true else null,
             ),
         )
     }
@@ -314,6 +337,10 @@ class LectorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun procesar(p: PedidoEscaneo, r: RespuestaEscaneo) {
+        if (r.estado == "propuesto") {
+            agregarAlBorrador(r.snTransf.orEmpty())
+            return
+        }
         val pregunta = when (r.estado) {
             "elegir" -> Pregunta.Elegir(r.candidatos, p)
             "en_otra_ot" -> Pregunta.Forzar(r.serial.orEmpty(), r.otro.orEmpty(), p)
@@ -326,6 +353,103 @@ class LectorViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(aviso = Aviso(describir(r), nivel(r)), pregunta = pregunta)
         }
         if (r.estado in CAMBIAN_EL_LOTE) refrescarLote()
+    }
+
+    // ── Lista de cargadores ──────────────────────────────
+    private fun agregarAlBorrador(sn: String) {
+        val aviso = sumarAlBorrador(sn)
+        senal(aviso.nivel)
+        actualizar { it.copy(aviso = aviso) }
+    }
+
+    /** Empareja el cargador con el próximo notebook sin cargador y lo suma a la lista. */
+    private fun sumarAlBorrador(sn: String): Aviso {
+        val s = estado.value
+        val destino = proximoSinCargador(s.lote, s.borrador)
+        val (aviso, borrador) = when {
+            s.borrador.any { it.snTransf.equals(sn, ignoreCase = true) } ->
+                Aviso("☑️ $sn ya está en la lista", Nivel.AVISO) to s.borrador
+            destino == null ->
+                Aviso("⚠️ No quedan notebooks sin cargador para $sn", Nivel.ERROR) to s.borrador
+            else ->
+                Aviso("🔌 $sn → $destino (falta guardar)", Nivel.OK) to s.borrador + ParCargador(destino, sn)
+        }
+        actualizar { it.copy(borrador = borrador) }
+        return aviso
+    }
+
+    /** Quita uno de la lista; los que venían después NO se corren: cada uno ya tiene su equipo. */
+    fun quitarDelBorrador(par: ParCargador) = actualizar {
+        it.copy(borrador = it.borrador - par, erroresBorrador = it.erroresBorrador - par.snTransf)
+    }
+
+    fun descartarBorrador() = actualizar {
+        it.copy(borrador = emptyList(), erroresBorrador = emptyMap(), aviso = Aviso("Lista descartada: no se guardó nada.", Nivel.AVISO))
+    }
+
+    fun guardarBorrador() {
+        val api = api ?: return
+        val s = estado.value
+        val ref = s.lote?.ref ?: return
+        val pares = s.borrador
+        if (pares.isEmpty() || s.ocupado) return
+        viewModelScope.launch {
+            actualizar { it.copy(ocupado = true, aviso = Aviso("💾 Guardando ${pares.size} cargador(es) en el PC…", Nivel.AVISO)) }
+            when (val r = api.guardarCargadores(PedidoCargadores(ref, pares))) {
+                is Resultado.Ok -> {
+                    val v = r.valor
+                    if (v.estado == "guardado") {
+                        senal(Nivel.OK)
+                        actualizar {
+                            it.copy(
+                                ocupado = false,
+                                borrador = it.borrador - pares.toSet(),
+                                erroresBorrador = emptyMap(),
+                                aviso = Aviso(
+                                    "✅ Guardado y verificado en el PC: ${v.guardados.size} cargador(es) " +
+                                        "en el JSON de cada equipo y en el FUSIONADO." +
+                                        if (v.sinCargador > 0) " Faltan ${v.sinCargador} notebook(s)." else "",
+                                    Nivel.OK,
+                                ),
+                            )
+                        }
+                        refrescarLote()
+                    } else {
+                        senal(Nivel.ERROR)
+                        val porCargador = v.errores.mapNotNull { e -> e.snTransf?.let { it to e.motivo } }.toMap()
+                        val titulo = if (v.estado == "rechazado") "❌ No se guardó NADA" else "❌ El PC no pudo confirmar el guardado"
+                        actualizar {
+                            it.copy(
+                                ocupado = false,
+                                erroresBorrador = porCargador,
+                                aviso = Aviso(
+                                    "$titulo: " + v.errores.joinToString(" · ") { e -> e.motivo } +
+                                        " Corregí la lista y tocá Guardar de nuevo.",
+                                    Nivel.ERROR,
+                                ),
+                            )
+                        }
+                    }
+                }
+                is Resultado.Rechazado -> {
+                    senal(Nivel.ERROR)
+                    if (r.codigo == 401) {
+                        desemparejar("El PC cambió el código: escaneá el QR de nuevo.")
+                    } else {
+                        actualizar { it.copy(ocupado = false, aviso = Aviso("❌ No se guardó: ${r.error.mensaje}", Nivel.ERROR)) }
+                    }
+                }
+                is Resultado.SinConexion -> {
+                    senal(Nivel.ERROR)
+                    actualizar {
+                        it.copy(
+                            ocupado = false,
+                            aviso = Aviso("📵 Sin conexión: no se pudo confirmar. La lista sigue acá, tocá Guardar de nuevo.", Nivel.ERROR),
+                        )
+                    }
+                }
+            }
+        }
     }
 
     private fun refrescarLote() {
@@ -352,31 +476,73 @@ class LectorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun cerrarPregunta() = actualizar { it.copy(pregunta = null) }
 
+    /**
+     * Reenvía los pendientes de a uno y EN ORDEN: la hora en que el PC los
+     * registra es el orden de escaneo con que se emparejan los cargadores.
+     * Se corta en el primero sin conexión (los demás esperan detrás) y en el
+     * primero que pide una decisión, que se muestra como cualquier pregunta.
+     * Lo que el PC rechazó se informa: nunca se da por enviado.
+     */
     fun reintentarPendientes() {
         val api = api ?: return
+        if (estado.value.ocupado) return
         viewModelScope.launch {
             actualizar { it.copy(ocupado = true) }
-            var quedan = emptyList<PedidoEscaneo>()
-            var ultimo: RespuestaEscaneo? = null
-            for (p in estado.value.pendientes) {
-                when (val r = api.escanear(p)) {
-                    is Resultado.Ok -> ultimo = r.valor
-                    is Resultado.SinConexion -> quedan = quedan + p
-                    is Resultado.Rechazado -> Unit // el lote ya no existe o el dato no sirve: se descarta
+            val cola = estado.value.pendientes
+            var hechos = 0
+            var listos = 0
+            val fallos = mutableListOf<String>()
+            var pregunta: Pair<PedidoEscaneo, RespuestaEscaneo>? = null
+            for (p in cola) {
+                val r = api.escanear(p)
+                if (r is Resultado.SinConexion) break
+                hechos++
+                if (r is Resultado.Rechazado) {
+                    if (r.codigo == 401) {
+                        desemparejar("El PC cambió el código: escaneá el QR de nuevo.")
+                        return@launch
+                    }
+                    fallos += "${textoLeido(p)}: ${r.error.mensaje}"
+                    continue
                 }
+                val v = (r as Resultado.Ok).valor
+                when (reenvio(v)) {
+                    Reenvio.LISTO -> listos++
+                    Reenvio.A_LA_LISTA ->
+                        if (p.lote != estado.value.lote?.ref) {
+                            fallos += "${v.snTransf}: era de otro lote, volvé a leerlo ahí"
+                        } else {
+                            val a = sumarAlBorrador(v.snTransf.orEmpty())
+                            if (a.nivel == Nivel.ERROR) fallos += a.texto else listos++
+                        }
+                    Reenvio.PREGUNTAR -> pregunta = p to v
+                    Reenvio.FALLO -> fallos += describir(v)
+                }
+                if (pregunta != null) break
             }
-            actualizar {
-                it.copy(
-                    pendientes = quedan,
-                    ocupado = false,
-                    aviso = if (quedan.isEmpty()) Aviso("✅ Pendientes enviados.", Nivel.OK)
-                    else Aviso("📵 Siguen ${quedan.size} pendiente(s).", Nivel.ERROR),
-                )
+            val quedan = cola.drop(hechos)
+            actualizar { it.copy(pendientes = quedan, ocupado = false) }
+
+            val partes = buildList {
+                if (listos > 0) add("✅ $listos enviado(s)")
+                if (fallos.isNotEmpty()) add("❌ ${fallos.size} NO entraron: " + fallos.joinToString(" · "))
+                if (quedan.isNotEmpty()) add("📵 Siguen ${quedan.size} pendiente(s)")
             }
-            senal(if (quedan.isEmpty()) Nivel.OK else Nivel.ERROR)
-            if (ultimo != null) refrescarLote()
+            val q = pregunta
+            if (q != null) {
+                // procesar muestra la pregunta; el resumen va detrás.
+                procesar(q.first, q.second)
+                actualizar { s -> s.copy(aviso = s.aviso?.let { it.copy(texto = (listOf(it.texto) + partes).joinToString(" · ")) }) }
+            } else {
+                val nivel = if (fallos.isEmpty() && quedan.isEmpty()) Nivel.OK else Nivel.ERROR
+                senal(nivel)
+                actualizar { it.copy(aviso = Aviso(partes.joinToString(" · ").ifEmpty { "Nada para enviar." }, nivel)) }
+            }
+            if (listos > 0) refrescarLote()
         }
     }
+
+    private fun textoLeido(p: PedidoEscaneo) = p.lecturas.firstOrNull()?.texto ?: "?"
 
     // ── Ficha del equipo ─────────────────────────────────
     fun abrirEquipo(serial: String) {

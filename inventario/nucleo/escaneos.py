@@ -495,6 +495,155 @@ def asignar_transformador(lote, sn_transf, serial_equipo=None):
     }
 
 
+def revisar_transformador(lote, sn_transf):
+    """
+    Lo que asignar_transformador diría de este cargador, SIN escribir nada:
+    el celular arma la lista y la guarda después con guardar_cargadores.
+
+      propuesto   — sirve ('sn_transf' normalizado)
+      duplicado   — ya es de un equipo del lote ('equipo')
+      es_equipo   — es el serial de un equipo del lote
+      invalido    — vacío
+    """
+    nuevo = normalizar_sn_transf(normalizar_lectura(sn_transf))
+    if not nuevo:
+        return {"estado": "invalido", "motivo": "Serial de transformador vacío."}
+    clave = _clave(nuevo)
+    for _, jdata in equipos_en_orden_de_escaneo(lote):
+        if _clave(jdata.get("SERIAL", "")) == clave:
+            return {"estado": "es_equipo", "sn_transf": nuevo}
+        if transformador_actual(jdata).upper() == nuevo.upper():
+            return {"estado": "duplicado", "sn_transf": nuevo, "equipo": jdata.get("SERIAL", "?")}
+    return {"estado": "propuesto", "sn_transf": nuevo}
+
+
+_MAX_PARES = 300
+
+
+def _fusionados(lote):
+    """{SERIAL: SN_Transf} de los FUSIONADO del lote, tal como quedaron en disco."""
+    vistos = {}
+    for archivo in sorted(os.listdir(lote["ruta"])):
+        if not archivo.endswith("_FUSIONADO.json"):
+            continue
+        try:
+            with open(os.path.join(lote["ruta"], archivo), "r", encoding="utf-8") as f:
+                for fila in json.load(f):
+                    if isinstance(fila, dict):
+                        vistos[_clave(fila.get("SERIAL", ""))] = fila.get("SN_Transf")
+        except (OSError, ValueError, TypeError):
+            continue
+    return vistos
+
+
+def guardar_cargadores(lote, pares):
+    """
+    Guarda de una vez los cargadores que el celular juntó en su lista:
+    pares = [{"serial": equipo, "sn_transf": cargador}].
+
+    Todo o nada: primero se revisa cada par contra lo que hay en disco y, si
+    alguno no sirve, no se escribe ninguno ('rechazado', con 'errores' por
+    par). Si todos sirven se escriben, se regeneran HTML y FUSIONADO y se
+    RELEE cada JSON y el FUSIONADO para confirmar que quedaron: 'guardado'
+    solo vuelve si lo escrito es lo que se pidió.
+
+    Mandar la misma lista dos veces no hace nada malo: los pares que ya están
+    escritos cuentan como guardados (así un reintento tras un corte de Wi-Fi
+    confirma en vez de fallar).
+    """
+    if not isinstance(pares, list) or not pares:
+        return {"estado": "rechazado", "errores": [{"motivo": "La lista está vacía."}]}
+    if len(pares) > _MAX_PARES:
+        return {"estado": "rechazado", "errores": [{"motivo": f"Máximo {_MAX_PARES} por vez."}]}
+
+    equipos = equipos_en_orden_de_escaneo(lote)
+    por_serial = {_clave(j.get("SERIAL", "")): (r, j) for r, j in equipos}
+    portador = {
+        transformador_actual(j).upper(): j.get("SERIAL", "?")
+        for _, j in equipos
+        if transformador_actual(j) != TRANSF_PENDIENTE
+    }
+
+    errores, cambios, pedidos = [], [], []
+    vistos_equipo, vistos_cargador = set(), set()
+    for par in pares:
+        par = par if isinstance(par, dict) else {}
+        serial = str(par.get("serial") or "")
+        nuevo = normalizar_sn_transf(normalizar_lectura(par.get("sn_transf")))
+        fila = {"serial": serial, "sn_transf": nuevo}
+
+        def error(motivo):
+            errores.append({**fila, "motivo": motivo})
+
+        destino = por_serial.get(_clave(serial))
+        if not destino:
+            error(f"El equipo {serial or '?'} no está en el lote.")
+            continue
+        if not nuevo:
+            error("Serial de cargador vacío.")
+            continue
+        if _clave(nuevo) in por_serial:
+            error(f"{nuevo} es el serial de un equipo, no de un cargador.")
+            continue
+        if _clave(serial) in vistos_equipo:
+            error(f"{serial} aparece dos veces en la lista.")
+            continue
+        if nuevo.upper() in vistos_cargador:
+            error(f"El cargador {nuevo} aparece dos veces en la lista.")
+            continue
+        vistos_equipo.add(_clave(serial))
+        vistos_cargador.add(nuevo.upper())
+
+        ruta, jdata = destino
+        serial_real = jdata.get("SERIAL", serial)
+        actual = transformador_actual(jdata)
+        otro = portador.get(nuevo.upper())
+        if otro is not None and _clave(otro) != _clave(serial_real):
+            error(f"El cargador {nuevo} ya es de {otro}.")
+            continue
+        if actual != TRANSF_PENDIENTE and actual.upper() != nuevo.upper():
+            error(f"{serial_real} ya tiene el cargador {actual}.")
+            continue
+        pedidos.append({"serial": serial_real, "sn_transf": nuevo})
+        if actual.upper() != nuevo.upper():
+            cambios.append((ruta, jdata, nuevo))
+
+    if errores:
+        return {"estado": "rechazado", "errores": errores}
+
+    if cambios:
+        fallas = guardar_transformadores(lote, cambios)
+        if fallas:
+            return {"estado": "error", "errores": [{"motivo": f} for f in fallas]}
+
+    # Verificación: lo que quedó en disco, no lo que se creyó escribir.
+    en_disco = {
+        _clave(j.get("SERIAL", "")): transformador_actual(j)
+        for _, j in equipos_en_orden_de_escaneo(lote)
+    }
+    fusionado = _fusionados(lote)
+    errores = []
+    for p in pedidos:
+        clave = _clave(p["serial"])
+        if (en_disco.get(clave) or "").upper() != p["sn_transf"].upper():
+            errores.append({**p, "motivo": "El JSON del equipo no quedó con ese cargador."})
+        elif (fusionado.get(clave) or "").upper() != p["sn_transf"].upper():
+            errores.append({**p, "motivo": "El FUSIONADO no quedó con ese cargador."})
+    if errores:
+        return {"estado": "error", "errores": errores}
+
+    return {
+        "estado": "guardado",
+        "guardados": pedidos,
+        "nuevos": len(cambios),
+        "sin_cargador": sum(
+            1
+            for _, j in equipos_en_orden_de_escaneo(lote)
+            if tipo_equipo(j) == TIPO_EQUIPO_DEFAULT and transformador_actual(j) == TRANSF_PENDIENTE
+        ),
+    }
+
+
 def estado_lote(lote):
     """Resumen del lote para la lista del celular, en orden de escaneo."""
     equipos = [

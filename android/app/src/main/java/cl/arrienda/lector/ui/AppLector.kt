@@ -144,6 +144,13 @@ private fun DialogoPregunta(p: Pregunta, vm: LectorViewModel) {
             confirmButton = {},
             dismissButton = { TextButton(onClick = vm::cerrarPregunta) { Text("Cancelar") } },
         )
+        is Pregunta.SalirSinGuardar -> AlertDialog(
+            onDismissRequest = vm::cerrarPregunta,
+            title = { Text("Cargadores sin guardar") },
+            text = { Text("Hay ${p.cantidad} cargador(es) en la lista que NO están en el PC.\n\nSi salís se pierden.") },
+            confirmButton = { TextButton(onClick = vm::cerrarPregunta) { Text("Quedarme y guardar") } },
+            dismissButton = { TextButton(onClick = vm::salirALotes) { Text("Salir sin guardar") } },
+        )
         is Pregunta.Reabrir -> AlertDialog(
             onDismissRequest = vm::cerrarPregunta,
             title = { Text("Lote cerrado") },

@@ -603,12 +603,18 @@ def guardar_equipo_general(
         else "PENDIENTE"
     )
 
+    # Re-escanear pisa el registro, salvo lo que no viene del hardware: el
+    # cargador ya asignado y la hora del primer escaneo, que fija el orden en
+    # que se emparejan los cargadores (transformadores.equipos_en_orden_de_escaneo).
+    previo = _registro_previo(lote, data["serial"])
+    ahora = datetime.now().isoformat(timespec="seconds")
+
     registro = {
         "CLIENTE": lote["cliente"],
         "SERIAL": data["serial"],
         "SN_Win": data["key"],
         "SN_HDD": sn_hdd,
-        "SN_Transf": "PENDIENTE",
+        "SN_Transf": previo.get("SN_Transf") or "PENDIENTE",
         "SN_APP": sn_app,
         "MODELO": data["model"],
         "TIPO_MOVIMIENTO": lote["mov"],
@@ -620,9 +626,19 @@ def guardar_equipo_general(
         "DATA": data,
         "OFFICE": f"Office {version_office}" if tiene_office else "No",
         # Timestamp ordenable: el HTML se rearma con el más reciente arriba.
-        "ESCANEADO": datetime.now().isoformat(timespec="seconds"),
+        "ESCANEADO": clave_orden(previo) or ahora,
     }
     return guardar_registro_en_lote(lote, registro)
+
+
+def _registro_previo(lote, serial):
+    """JSON que ya tiene ese equipo en el lote, o {} si es nuevo o no se pudo leer."""
+    try:
+        with open(ruta_json_equipo(lote, serial), "r", encoding="utf-8") as f:
+            jdata = json.load(f)
+        return jdata if isinstance(jdata, dict) else {}
+    except (OSError, ValueError):
+        return {}
 
 
 def _ruta_no_pisar(ruta):

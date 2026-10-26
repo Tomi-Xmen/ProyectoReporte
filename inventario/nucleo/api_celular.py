@@ -11,6 +11,7 @@ mueve bytes, así toda la lógica se prueba sin abrir un puerto.
     POST /api/v1/lotes      crear o reabrir un lote {mov, cliente, numero, numero_sec, reabrir}
     POST /api/v1/lote       equipos de un lote {lote: {mov, cliente, numero}}
     POST /api/v1/escaneo    un escaneo (ver _escaneo)
+    POST /api/v1/cargadores guardar la lista de cargadores {lote, pares} (ver guardar_cargadores)
     POST /api/v1/equipo     ficha de un equipo {lote, serial} (ver nucleo/fichas.py)
     POST /api/v1/equipo/editar  editar su JSON {lote, serial, version, cambios}
     POST /api/v1/equipo/mover   pasarlo a otro lote abierto {lote, serial, destino}
@@ -20,9 +21,11 @@ mueve bytes, así toda la lógica se prueba sin abrir un puerto.
     POST /api/v1/lote/cerrar    cerrar el lote, con backup {lote}
     (ver nucleo/gestion_lote.py)
 
-Seguridad: cada sesión del panel genera un token nuevo que viaja solo en el QR
-de emparejamiento; sin él todo responde 401. El transporte además rechaza
-conexiones que no vengan de la red local.
+Seguridad: el token viaja solo en el QR de emparejamiento; sin él todo
+responde 401. Se guarda en lector_celular.json (junto al programa) para que
+el celular siga emparejado entre reinicios; "Código nuevo" en el panel lo
+cambia y desempareja a todos. El transporte además rechaza conexiones que no
+vengan de la red local.
 
 El celular NO cambia cuál es la OT activa del PC: trabaja sobre el lote que
 nombra en cada pedido. Sí puede cerrar un lote (lo mismo que "Cerrar OT" del
@@ -46,9 +49,11 @@ from .escaneos import (
     cargar_reglas,
     elegir_codigo,
     estado_lote,
+    guardar_cargadores,
     lote_desde_formulario,
     registrar_equipo,
     resolver_lote,
+    revisar_transformador,
 )
 from .lotes import (
     abrir_lote,
@@ -69,6 +74,47 @@ PREFIJO = f"/api/v{VERSION_API}"
 # equipo no se procesa dos veces.
 _MAX_RECORDADAS = 500
 _MAX_LECTURAS = 20
+
+
+ARCHIVO_PREFERENCIAS = "lector_celular.json"
+_LARGO_MIN_TOKEN = 16
+
+
+def cargar_preferencias(ruta=None):
+    """
+    Preferencias del lector: {"encender_al_iniciar", "token", "puerto"}. Sin
+    archivo, o con uno roto, vuelve todo apagado: un JSON dañado nunca abre
+    un puerto ni deja pasar un token que no es.
+    """
+    prefs = {"encender_al_iniciar": False, "token": None, "puerto": None}
+    try:
+        with open(ruta or ARCHIVO_PREFERENCIAS, "r", encoding="utf-8") as f:
+            datos = json.load(f)
+    except (OSError, ValueError):
+        return prefs
+    if not isinstance(datos, dict):
+        return prefs
+    prefs["encender_al_iniciar"] = datos.get("encender_al_iniciar") is True
+    token = datos.get("token")
+    if isinstance(token, str) and len(token) >= _LARGO_MIN_TOKEN:
+        prefs["token"] = token
+    puerto = datos.get("puerto")
+    if isinstance(puerto, int) and not isinstance(puerto, bool) and 1024 <= puerto <= 65535:
+        prefs["puerto"] = puerto
+    return prefs
+
+
+def guardar_preferencias(prefs, ruta=None):
+    """Escribe las preferencias. Un error se avisa por consola: no corta el lector."""
+    try:
+        with open(ruta or ARCHIVO_PREFERENCIAS, "w", encoding="utf-8") as f:
+            json.dump(prefs, f, ensure_ascii=False, indent=4)
+    except OSError as e:
+        print(f"⚠️  No se pudo guardar {ARCHIVO_PREFERENCIAS}: {e}")
+
+
+def token_nuevo():
+    return secrets.token_urlsafe(24)
 
 
 def es_red_local(ip):
@@ -100,6 +146,14 @@ def ip_principal():
 def describir_respuesta(r):
     """Una línea legible para el registro del panel."""
     estado = r.get("estado")
+    if estado == "guardado":
+        return f"💾 {len(r['guardados'])} cargador(es) guardado(s) y verificado(s)"
+    if estado == "rechazado":
+        return f"⚠️ Lista de cargadores rechazada: {len(r['errores'])} problema(s), no se guardó nada"
+    if estado == "error":
+        return f"❌ No se pudo guardar/verificar: {r['errores'][0].get('motivo', '?')}"
+    if estado == "propuesto":
+        return "🔌 Cargador leído (falta guardar en el celular)"
     if estado == "editado":
         return f"✏️ Ficha editada desde el celular: {', '.join(r['campos'])}"
     if estado == "registrado":
@@ -133,6 +187,7 @@ def describir_respuesta(r):
     return {
         "equipo_no_encontrado": "⚠️ El equipo no está en el lote",
         "sin_equipo_pendiente": "⚠️ No quedan notebooks sin transformador",
+        "es_equipo": "⚠️ Es el serial de un equipo del lote, no de un transformador",
         "elegir": "❔ Varios códigos: se pidió elegir uno",
         "sin_serial": "❌ Ningún código era un serial",
         "sin_tipo": "❔ Se pidió qué tipo de equipo es",
@@ -163,7 +218,7 @@ class ApiCelular:
         al_evento(dict): avisa cada escaneo procesado, para el registro del
         panel. Nunca debe cortar la respuesta: sus errores se ignoran.
         """
-        self.token = token or secrets.token_urlsafe(24)
+        self.token = token or token_nuevo()
         self.reglas = cargar_reglas() if reglas is None else reglas
         self.al_evento = al_evento
         self._recordadas = OrderedDict()
@@ -222,6 +277,7 @@ class ApiCelular:
             ("POST", "/lotes"): lambda: self._crear_lote(datos),
             ("POST", "/lote"): lambda: estado_lote(self._lote(datos)),
             ("POST", "/escaneo"): lambda: self._escaneo(datos),
+            ("POST", "/cargadores"): lambda: self._cargadores(datos),
             ("POST", "/equipo"): lambda: fichas.ficha(
                 self._lote(datos), self._texto(datos, "serial")
             ),
@@ -333,6 +389,8 @@ class ApiCelular:
           "solo_leer": opcional, transformador: no asignar, decir qué se leyó
           "reasignar": opcional, con serial_equipo: pasarlo aunque sea de otro
           "forzar": opcional, registrar aunque esté en otra OT
+          "borrador": opcional, con un transformador: solo revisarlo, no
+                      escribir (el celular lo suma a su lista; ver /cargadores)
           "modelo", "obs": opcionales
         }
 
@@ -371,6 +429,8 @@ class ApiCelular:
             respuesta = {"estado": "otro_tipo", "valor": valor, "tipo": tipo, "esperado": esperado}
         elif not tipo:
             respuesta = {"estado": "sin_tipo", "valor": valor}
+        elif tipo == TIPO_TRANSFORMADOR and datos.get("borrador") is True:
+            respuesta = revisar_transformador(lote, valor)
         elif tipo == TIPO_TRANSFORMADOR and datos.get("solo_leer") is True:
             respuesta = gestion_lote.leer_transformador(lote, valor)
         elif tipo == TIPO_TRANSFORMADOR and datos.get("reasignar") is True and datos.get("serial_equipo"):
@@ -398,6 +458,13 @@ class ApiCelular:
             while len(self._recordadas) > _MAX_RECORDADAS:
                 self._recordadas.popitem(last=False)
         self._avisar(lote, valor, respuesta)
+        return respuesta
+
+    def _cargadores(self, datos):
+        lote = self._lote(datos)
+        respuesta = guardar_cargadores(lote, datos.get("pares"))
+        respuesta["lote"] = etiqueta_lote(lote)
+        self._avisar(lote, "", respuesta)
         return respuesta
 
     @staticmethod

@@ -12,14 +12,20 @@ FUSIONADO de siempre.
    tienen que estar en el mismo Wi-Fi.
 3. Elegir una OT/guía abierta o crear una nueva.
 4. Elegir qué se escanea y apuntar a la etiqueta:
-   - **Notebook + cargador** (guiado): notebook, después su cargador, y así.
+   - **Cargadores** (el modo con que se entra): los notebooks llegan al lote
+     desde el PC y cada cargador leído se empareja con el siguiente notebook
+     sin cargador, en el orden en que se escanearon. Abajo de la cámara dice a
+     cuál le toca; la lista del lote se refresca sola cada 3 s.
+     Los cargadores quedan en **SIN GUARDAR** (se puede quitar uno con ✕)
+     hasta tocar **💾 Guardar**: el PC revisa la lista entera (si un par no
+     sirve no guarda ninguno), escribe `SN_Transf` en el JSON de cada equipo,
+     regenera HTML y FUSIONADO y relee lo escrito. Recién con el ✅
+     "Guardado y verificado" están en el PC.
    - **Cargador → elegir equipo**: se escanea el cargador y la app muestra
      los notebooks del lote (primero los que no tienen cargador) para tocar a
      cuál va. Si ya era de otro equipo, pasa al elegido y el otro queda sin
-     cargador.
+     cargador. Se guarda en el PC en el momento, sin lista.
    - **Notebooks**, **Monitores**, **Impresoras**: uno tras otro.
-   - **Cargadores en ráfaga**: cada cargador va al siguiente notebook sin
-     cargador, en el orden en que se escanearon.
 
 ## Gestión del lote desde el celular
 
@@ -70,7 +76,7 @@ el PC reconoce el reintento y no registra dos veces.
 ```
 app/src/main/java/cl/arrienda/lector/
   data/      contrato con el PC: modelos, cliente HTTP, emparejamiento guardado
-  escaneo/   cámara + ML Kit, cuándo una lectura está firme, modo guiado, textos
+  escaneo/   cámara + ML Kit, cuándo una lectura está firme, modos, textos
   ui/        pantallas (Compose), ViewModel, sonido y vibración
 app/src/test/  tests JVM (sin celular)
 ```

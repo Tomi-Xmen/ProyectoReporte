@@ -242,6 +242,58 @@ def test_transformadores_en_rafaga(lote_con_equipos):
     assert escaneos.asignar_transformador(lote, "TR-0003")["estado"] == "sin_equipo_pendiente"
 
 
+def test_rafaga_sigue_con_los_equipos_que_llegan_del_pc(lote_con_equipos):
+    lote = lote_con_equipos
+    escaneos.asignar_transformador(lote, "TR-0001")
+    escaneos.asignar_transformador(lote, "TR-0002")
+    assert escaneos.asignar_transformador(lote, "TR-0003")["estado"] == "sin_equipo_pendiente"
+
+    # Llega un notebook nuevo escaneado en el PC: el próximo cargador es suyo.
+    lotes.guardar_equipo_general(lote, datos_equipo("SN3"), "", False, "", "2016", [])
+    r = escaneos.asignar_transformador(lote, "TR-0003")
+    assert (r["estado"], r["equipo"]) == ("asignado", "SN3")
+
+
+def test_reescanear_en_el_pc_no_pierde_el_cargador_ni_el_orden(lote_con_equipos):
+    lote = lote_con_equipos
+    orden = [e["SERIAL"] for _, e in escaneos.equipos_en_orden_de_escaneo(lote)]
+    primero = escaneos.asignar_transformador(lote, "TR-0001")["equipo"]
+    assert primero == orden[0]
+
+    # El primero se vuelve a pasar por el PC (p. ej. para leer el hardware).
+    lotes.guardar_equipo_general(lote, datos_equipo(primero), "otra vez", False, "", "2016", [])
+
+    assert [e["SERIAL"] for _, e in escaneos.equipos_en_orden_de_escaneo(lote)] == orden
+    assert escaneos.estado_lote(lote)["equipos"][0]["sn_transf"] == "TR-0001"
+    # El próximo cargador sigue yendo al segundo, no al re-escaneado.
+    r = escaneos.asignar_transformador(lote, "TR-0002")
+    assert (r["estado"], r["equipo"]) == ("asignado", orden[1])
+
+
+def test_completar_en_el_pc_un_equipo_leido_por_el_celular(lote_con_equipos):
+    lote = lote_con_equipos
+    escaneos.registrar_equipo(lote, "CEL12345")
+    escaneos.guardar_cargadores(lote, [{"serial": "CEL12345", "sn_transf": "TR-0009"}])
+
+    lotes.guardar_equipo_general(lote, datos_equipo("CEL12345"), "", False, "", "2016", [])
+
+    (eq,) = [e for e in lotes.leer_equipos_lote(lote) if e["SERIAL"] == "CEL12345"]
+    assert eq["SN_Transf"] == "TR-0009"
+    assert eq.get("ORIGEN") != escaneos.ORIGEN_CELULAR  # ya tiene hardware
+
+
+def test_la_etiqueta_de_un_equipo_no_se_guarda_como_cargador(lote_con_equipos):
+    lote = lote_con_equipos
+    primero = escaneos.asignar_transformador(lote, "TR-0001")["equipo"]
+    segundo = "SN2" if primero == "SN1" else "SN1"
+
+    assert escaneos.asignar_transformador(lote, segundo.lower())["estado"] == "es_equipo"
+    assert escaneos.asignar_transformador(lote, primero, serial_equipo=segundo)["estado"] == "es_equipo"
+    # No consumió ni pisó nada.
+    r = escaneos.asignar_transformador(lote, "TR-0002")
+    assert (r["estado"], r["equipo"]) == ("asignado", segundo)
+
+
 def test_transformador_guiado(lote_con_equipos):
     lote = lote_con_equipos
     r = escaneos.asignar_transformador(lote, "TR-0001", serial_equipo="SN2")
@@ -276,3 +328,87 @@ def test_estado_lote(lote_con_equipos):
         "sn_transf": None,
         "sin_hardware": True,
     }
+
+
+# ─── Lista de cargadores del celular (guardar con botón) ────────────────
+def _transf_en_disco(lote):
+    return {
+        e["SERIAL"]: escaneos.transformador_actual(e)
+        for _, e in escaneos.equipos_en_orden_de_escaneo(lote)
+    }
+
+
+def test_revisar_transformador_no_escribe(lote_con_equipos):
+    lote = lote_con_equipos
+    antes = _transf_en_disco(lote)
+    assert escaneos.revisar_transformador(lote, " tr-0001 ") == {
+        "estado": "propuesto", "sn_transf": "TR-0001",
+    }
+    assert escaneos.revisar_transformador(lote, "SN1")["estado"] == "es_equipo"
+    assert escaneos.revisar_transformador(lote, "")["estado"] == "invalido"
+    assert _transf_en_disco(lote) == antes
+
+    escaneos.guardar_cargadores(lote, [{"serial": "SN1", "sn_transf": "TR-0001"}])
+    r = escaneos.revisar_transformador(lote, "TR-0001")
+    assert (r["estado"], r["equipo"]) == ("duplicado", "SN1")
+
+
+def test_guardar_cargadores_escribe_y_verifica_json_y_fusionado(lote_con_equipos):
+    lote = lote_con_equipos
+    r = escaneos.guardar_cargadores(
+        lote,
+        [{"serial": "SN1", "sn_transf": "TR-0001"}, {"serial": "sn2", "sn_transf": "tr-0002"}],
+    )
+    assert r["estado"] == "guardado"
+    assert r["guardados"] == [
+        {"serial": "SN1", "sn_transf": "TR-0001"},
+        {"serial": "SN2", "sn_transf": "TR-0002"},
+    ]
+    assert (r["nuevos"], r["sin_cargador"]) == (2, 0)
+    assert _transf_en_disco(lote) == {"SN1": "TR-0001", "SN2": "TR-0002"}
+    assert escaneos._fusionados(lote) == {"SN1": "TR-0001", "SN2": "TR-0002"}
+
+    # El mismo pedido otra vez (reintento tras un corte) confirma sin reescribir.
+    r = escaneos.guardar_cargadores(lote, [{"serial": "SN1", "sn_transf": "TR-0001"}])
+    assert (r["estado"], r["nuevos"]) == ("guardado", 0)
+
+
+@pytest.mark.parametrize(
+    "pares, motivo",
+    [
+        ([{"serial": "NOEXISTE", "sn_transf": "TR-1"}], "no está en el lote"),
+        ([{"serial": "SN1", "sn_transf": "  "}], "vacío"),
+        ([{"serial": "SN1", "sn_transf": "SN2"}], "serial de un equipo"),
+        ([{"serial": "SN1", "sn_transf": "TR-1"}, {"serial": "SN1", "sn_transf": "TR-2"}], "dos veces"),
+        ([{"serial": "SN1", "sn_transf": "TR-1"}, {"serial": "SN2", "sn_transf": "tr-1"}], "dos veces"),
+        (["basura"], "no está en el lote"),
+    ],
+)
+def test_guardar_cargadores_todo_o_nada(lote_con_equipos, pares, motivo):
+    lote = lote_con_equipos
+    antes = _transf_en_disco(lote)
+    r = escaneos.guardar_cargadores(lote, [{"serial": "SN2", "sn_transf": "TR-OK"}] + pares)
+    assert r["estado"] == "rechazado"
+    assert any(motivo in e["motivo"] for e in r["errores"])
+    assert _transf_en_disco(lote) == antes  # ni el par bueno se escribió
+
+
+def test_guardar_cargadores_no_pisa_lo_que_ya_tiene_otro_cargador(lote_con_equipos):
+    lote = lote_con_equipos
+    escaneos.guardar_cargadores(lote, [{"serial": "SN1", "sn_transf": "TR-0001"}])
+
+    r = escaneos.guardar_cargadores(lote, [{"serial": "SN1", "sn_transf": "TR-0009"}])
+    assert r["estado"] == "rechazado" and "ya tiene el cargador TR-0001" in r["errores"][0]["motivo"]
+    r = escaneos.guardar_cargadores(lote, [{"serial": "SN2", "sn_transf": "TR-0001"}])
+    assert r["estado"] == "rechazado" and "ya es de SN1" in r["errores"][0]["motivo"]
+    assert escaneos.guardar_cargadores(lote, [])["estado"] == "rechazado"
+    assert _transf_en_disco(lote)["SN1"] == "TR-0001"
+
+
+def test_guardar_cargadores_avisa_si_la_verificacion_falla(lote_con_equipos, monkeypatch):
+    lote = lote_con_equipos
+    # Simula un disco que "acepta" la escritura pero no la guarda.
+    monkeypatch.setattr(escaneos, "guardar_transformadores", lambda lote, cambios: [])
+    r = escaneos.guardar_cargadores(lote, [{"serial": "SN1", "sn_transf": "TR-0001"}])
+    assert r["estado"] == "error"
+    assert "JSON del equipo" in r["errores"][0]["motivo"]

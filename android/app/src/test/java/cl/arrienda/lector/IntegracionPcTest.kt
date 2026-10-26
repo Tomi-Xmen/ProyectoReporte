@@ -4,6 +4,8 @@ import cl.arrienda.lector.data.ApiPc
 import cl.arrienda.lector.data.Emparejamiento
 import cl.arrienda.lector.data.Lectura
 import cl.arrienda.lector.data.LoteRef
+import cl.arrienda.lector.data.ParCargador
+import cl.arrienda.lector.data.PedidoCargadores
 import cl.arrienda.lector.data.PedidoEscaneo
 import cl.arrienda.lector.data.PedidoNuevoLote
 import cl.arrienda.lector.data.Resultado
@@ -80,6 +82,22 @@ class IntegracionPcTest {
         val estado = ok(api.estadoLote(lote))
         assertEquals(2, estado.equipos.size)
         assertEquals("TR-0001", estado.equipos.single { it.serial == "5CD805DVNV" }.snTransf)
+
+        // Lista de cargadores: el borrador no escribe; Guardar escribe y el PC lo verifica.
+        val nb2 = ok(
+            api.escanear(PedidoEscaneo(id = "int-4", lote = lote, esperado = Tipos.NOTEBOOK, lecturas = listOf(Lectura("5CD805GRDA")))),
+        )
+        assertEquals("registrado", nb2.estado)
+        val leido = ok(
+            api.escanear(
+                PedidoEscaneo(id = "int-5", lote = lote, esperado = Tipos.TRANSFORMADOR, borrador = true, lecturas = listOf(Lectura("TR-0500"))),
+            ),
+        )
+        assertEquals("propuesto", leido.estado)
+        assertEquals(null, ok(api.estadoLote(lote)).equipos.single { it.serial == "5CD805GRDA" }.snTransf)
+        val guardado = ok(api.guardarCargadores(PedidoCargadores(lote, listOf(ParCargador("5CD805GRDA", "TR-0500")))))
+        assertEquals("guardado", guardado.estado)
+        assertEquals("TR-0500", ok(api.estadoLote(lote)).equipos.single { it.serial == "5CD805GRDA" }.snTransf)
 
         val nuevo = ok(api.crearLote(PedidoNuevoLote("Retiro", "Gamma Ltda", "Guía 77")))
         assertEquals("GAMMA_LTDA" to "77", nuevo.cliente to nuevo.numero)

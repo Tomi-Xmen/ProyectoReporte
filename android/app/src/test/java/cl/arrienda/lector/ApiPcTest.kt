@@ -19,6 +19,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.net.InetAddress
 
 /** El cliente HTTP contra un servidor falso: cabeceras, cuerpo, errores y reintentos. */
 class ApiPcTest {
@@ -28,8 +29,11 @@ class ApiPcTest {
 
     @Before
     fun arrancar() {
-        servidor = MockWebServer().apply { start() }
-        val url = servidor.url("/").toString().trimEnd('/')
+        // IP literal, no servidor.url(): "localhost" resuelve también a ::1,
+        // donde el servidor no escucha, y tras el primer corte OkHttp prueba
+        // esa ruta y los reintentos nunca llegan. El celular usa la IP del QR.
+        servidor = MockWebServer().apply { start(InetAddress.getByName("127.0.0.1"), 0) }
+        val url = "http://127.0.0.1:${servidor.port}"
         api = ApiPc(Emparejamiento("inventario-arrienda", 1, url, "tok"), dormir = {})
     }
 

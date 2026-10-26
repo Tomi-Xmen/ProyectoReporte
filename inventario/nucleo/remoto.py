@@ -40,6 +40,8 @@ from .lotes import (
     marcar_enviado,
     regenerar_lote,
 )
+from .reporte_html import TRANSF_PENDIENTE
+from .transformadores import transformador_actual
 
 if config.SCP_AVAILABLE:
     import paramiko
@@ -472,16 +474,50 @@ def descargar_equipos_remotos(cliente, lote):
 
     os.makedirs(lote["ruta"], exist_ok=True)
     bajados = 0
-    with SCPClient(cliente.get_transport(), socket_timeout=SCP_TIMEOUT) as scp:
+    # Se baja a un temporal y no directo encima del JSON local: el del
+    # servidor lo escribió el equipo clonado, que no sabe nada de lo que se
+    # cargó acá después (el transformador), y pisarlo lo borraría.
+    with tempfile.TemporaryDirectory() as tmp, SCPClient(
+        cliente.get_transport(), socket_timeout=SCP_TIMEOUT
+    ) as scp:
         for remoto in remotos:
-            local = os.path.join(lote["ruta"], os.path.basename(remoto))
+            nombre = os.path.basename(remoto)
+            bajado = os.path.join(tmp, nombre)
             try:
-                scp.get(remoto, local_path=local)
+                scp.get(remoto, local_path=bajado)
+                guardar_bajado_sin_pisar(bajado, os.path.join(lote["ruta"], nombre))
                 bajados += 1
             except Exception as e:
                 print(f"No se pudo bajar {remoto}: {e}")
     guardar_meta_lote(lote)
     return bajados, regenerar_lote(lote)
+
+
+def guardar_bajado_sin_pisar(ruta_bajada, ruta_local):
+    """
+    Deja en ruta_local el JSON bajado del servidor, conservando el
+    transformador que ya tenía el local. El equipo clonado manda siempre
+    SN_Transf en PENDIENTE (el cargador se asigna en la central, después), así
+    que el del servidor nunca puede ganarle a uno cargado acá.
+
+    Un JSON bajado que no se puede leer no reemplaza a nada: se lanza y el
+    local queda como estaba.
+    """
+    with open(ruta_bajada, "r", encoding="utf-8") as f:
+        jdata = json.load(f)
+    if not isinstance(jdata, dict) or not jdata.get("SERIAL"):
+        raise ValueError(f"{os.path.basename(ruta_bajada)} no es un JSON de equipo")
+
+    try:
+        with open(ruta_local, "r", encoding="utf-8") as f:
+            local = json.load(f)
+    except (OSError, ValueError):
+        local = {}
+    if isinstance(local, dict) and transformador_actual(local) != TRANSF_PENDIENTE:
+        jdata["SN_Transf"] = transformador_actual(local)
+
+    with open(ruta_local, "w", encoding="utf-8") as f:
+        json.dump(jdata, f, ensure_ascii=False, indent=4)
 
 
 def cerrar_lote_remoto(cliente, lote, total):

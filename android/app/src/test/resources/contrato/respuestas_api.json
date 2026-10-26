@@ -264,7 +264,7 @@
     "cuerpo": {
       "serial": "5CD805DVNV",
       "tipo": "Notebook",
-      "version": "f50db19ceb92",
+      "version": "af68d1c7a494",
       "sin_hardware": false,
       "tiene_fallas": false,
       "datos": {
@@ -371,7 +371,7 @@
     "cuerpo": {
       "serial": "MON12345",
       "tipo": "Monitor",
-      "version": "49c0ee57f30b",
+      "version": "0898fab2a2e0",
       "sin_hardware": true,
       "tiene_fallas": false,
       "datos": {
@@ -440,7 +440,7 @@
           "obs": ""
         }
       ],
-      "fecha": "24/10/2026 01:09",
+      "fecha": "26/10/2026 10:35",
       "hardware": {
         "host": "",
         "cpu": "",
@@ -478,7 +478,7 @@
     "cuerpo": {
       "serial": "5CD805DVNV",
       "tipo": "Notebook",
-      "version": "70f80294e48a",
+      "version": "705561fae701",
       "sin_hardware": false,
       "tiene_fallas": false,
       "datos": {
@@ -592,7 +592,7 @@
     "cuerpo": {
       "serial": "5CD805DVNV",
       "tipo": "Notebook",
-      "version": "9724057d387f",
+      "version": "36a7578f87e0",
       "sin_hardware": false,
       "tiene_fallas": false,
       "datos": {
@@ -703,6 +703,44 @@
       "mensaje": "El transformador TR-0009 ya es de 5CD805DVNV."
     }
   },
+  "escaneo_borrador": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "propuesto",
+      "sn_transf": "TR-0200",
+      "descartes": [],
+      "lote": "ACME · OT-553 · ENTREGAS"
+    }
+  },
+  "cargadores_guardado": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "guardado",
+      "guardados": [
+        {
+          "serial": "5CD805NUEV",
+          "sn_transf": "TR-0200"
+        }
+      ],
+      "nuevos": 1,
+      "sin_cargador": 0,
+      "lote": "ACME · OT-553 · ENTREGAS"
+    }
+  },
+  "cargadores_rechazado": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "rechazado",
+      "errores": [
+        {
+          "serial": "NOEXISTE1",
+          "sn_transf": "TR-0201",
+          "motivo": "El equipo NOEXISTE1 no está en el lote."
+        }
+      ],
+      "lote": "ACME · OT-553 · ENTREGAS"
+    }
+  },
   "escaneo_leido_libre": {
     "codigo": 200,
     "cuerpo": {
@@ -739,7 +777,7 @@
     "codigo": 200,
     "cuerpo": {
       "etiqueta": "ACME · OT-553 · ENTREGAS",
-      "equipos": 3,
+      "equipos": 4,
       "sin_cargador": [
         "5CD805DVNV"
       ],
@@ -757,6 +795,20 @@
       "etiqueta": "ACME · OT-553 · ENTREGAS",
       "equipos": [
         {
+          "serial": "5CD805NUEV",
+          "tipo": "Notebook",
+          "modelo": "HP EliteBook 840",
+          "sn_transf": "TR-0200",
+          "sin_hardware": false
+        },
+        {
+          "serial": "MON12345",
+          "tipo": "Monitor",
+          "modelo": "Monitor",
+          "sn_transf": null,
+          "sin_hardware": true
+        },
+        {
           "serial": "5CD805ABCD",
           "tipo": "Notebook",
           "modelo": "HP EliteBook 840",
@@ -769,13 +821,6 @@
           "modelo": "HP EliteBook 840",
           "sn_transf": null,
           "sin_hardware": false
-        },
-        {
-          "serial": "MON12345",
-          "tipo": "Monitor",
-          "modelo": "Monitor",
-          "sn_transf": null,
-          "sin_hardware": true
         }
       ]
     }
@@ -793,7 +838,7 @@
       "estado": "movido",
       "serial": "MON12345",
       "destino": "BETA · GUIA-77 · RETIROS",
-      "total": 2
+      "total": 3
     }
   },
   "equipo_mover_mismo_lote": {
@@ -808,7 +853,7 @@
     "cuerpo": {
       "estado": "quitado",
       "serial": "5CD805DVNV",
-      "total": 1
+      "total": 2
     }
   },
   "equipo_quitar_inexistente": {
@@ -823,8 +868,8 @@
     "cuerpo": {
       "estado": "cerrado",
       "etiqueta": "ACME · OT-553 · ENTREGAS",
-      "total": 1,
-      "backup": "Backup_2026-10-24_01-09-01_cierre.zip"
+      "total": 2,
+      "backup": "Backup_2026-10-26_10-35-59_cierre.zip"
     }
   },
   "lote_cerrado_resumen": {

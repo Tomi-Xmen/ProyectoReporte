@@ -46,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import cl.arrienda.lector.data.EquipoLote
+import cl.arrienda.lector.data.ParCargador
 import cl.arrienda.lector.data.EstadoLote
 import cl.arrienda.lector.data.Movimientos
 import cl.arrienda.lector.data.Tipos
@@ -99,7 +100,7 @@ fun PantallaEscaneo(estado: EstadoUi, vm: LectorViewModel) {
                 alCambiarZoom = { zoom = it },
             )
             Text(
-                estado.flujo.indicacion,
+                estado.flujo.indicacion(lote, estado.borrador),
                 color = Color.White,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -153,8 +154,16 @@ fun PantallaEscaneo(estado: EstadoUi, vm: LectorViewModel) {
             OutlinedButton(onClick = vm::leerDeNuevo) { Text("↻ Releer") }
             if (estado.flujo.cargadorPara != null) {
                 OutlinedButton(onClick = vm::cancelarCargadorPara) { Text("Cancelar cargador") }
-            } else if (estado.flujo.modo == Modo.GUIADO && estado.flujo.equipoGuiado != null) {
-                OutlinedButton(onClick = vm::saltarCargador) { Text("Sin cargador") }
+            }
+        }
+        // Los cargadores leídos quedan acá hasta Guardar: recién con el ✅ del PC
+        // están escritos (y verificados) en el JSON de cada equipo.
+        if (estado.borrador.isNotEmpty()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Button(onClick = vm::guardarBorrador, enabled = !estado.ocupado, modifier = Modifier.weight(1f)) {
+                    Text("💾 Guardar ${estado.borrador.size} cargador(es)")
+                }
+                TextButton(onClick = vm::descartarBorrador, enabled = !estado.ocupado) { Text("Descartar") }
             }
         }
         if (estado.pendientes.isNotEmpty()) {
@@ -179,6 +188,20 @@ fun PantallaEscaneo(estado: EstadoUi, vm: LectorViewModel) {
 
         HorizontalDivider()
         LazyColumn(Modifier.weight(1f)) {
+            if (estado.borrador.isNotEmpty()) {
+                item {
+                    Text(
+                        "SIN GUARDAR (${estado.borrador.size})",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(vertical = 4.dp),
+                    )
+                }
+                items(estado.borrador.asReversed()) { par ->
+                    FilaBorrador(par, estado.erroresBorrador[par.snTransf], quitar = { vm.quitarDelBorrador(par) })
+                }
+                item { HorizontalDivider(Modifier.padding(vertical = 4.dp)) }
+            }
             // Sin key: un lote viejo podría traer dos registros con el mismo serial.
             items(lote.equipos.asReversed()) { e -> FilaEquipo(e) { vm.abrirEquipo(e.serial) } }
         }
@@ -231,6 +254,25 @@ private fun DialogoOpcionesLote(lote: EstadoLote, vm: LectorViewModel, cerrar: (
         confirmButton = {},
         dismissButton = { TextButton(onClick = cerrar) { Text("Volver") } },
     )
+}
+
+@Composable
+private fun FilaBorrador(par: ParCargador, error: String?, quitar: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (error != null) Color(0x33EF4444) else Color(0x22F59E0B))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("💻 ${par.serial}", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+            Text("🔌 ${par.snTransf}  ·  sin guardar", fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+            if (error != null) Text("❌ $error", style = MaterialTheme.typography.bodySmall)
+        }
+        TextButton(onClick = quitar) { Text("✕") }
+    }
 }
 
 @Composable

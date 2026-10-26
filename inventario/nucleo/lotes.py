@@ -32,6 +32,7 @@ import re
 import zipfile
 from datetime import datetime
 
+from . import requerimiento
 from .reporte_html import (
     HTML_END,
     HTML_START,
@@ -149,12 +150,21 @@ def numeros_lote(lote):
 
 
 def guardar_meta_lote(lote):
-    """Deja en la carpeta del lote el número que la ruta no puede codificar."""
+    """
+    Deja en la carpeta del lote lo que la ruta no puede codificar: el número
+    secundario y, en una entrega, el requerimiento de specs. Casi todos los
+    que llaman traen un lote sin 'requerimiento' (sale del puntero al lote
+    activo o de la ruta), así que se conserva el que ya tenga la carpeta.
+    """
     try:
         os.makedirs(lote["ruta"], exist_ok=True)
+        meta = leer_meta_lote(lote["ruta"])
+        meta["numero_sec"] = lote.get("numero_sec", "")
+        if "requerimiento" in lote:
+            meta["requerimiento"] = requerimiento.normalizar(lote["requerimiento"])
         ruta = os.path.join(lote["ruta"], ARCHIVO_META_LOTE)
         with open(ruta, "w", encoding="utf-8") as f:
-            json.dump({"numero_sec": lote.get("numero_sec", "")}, f, ensure_ascii=False)
+            json.dump(meta, f, ensure_ascii=False)
     except Exception:
         pass
 
@@ -171,6 +181,11 @@ def leer_meta_lote(ruta):
 
 def numero_sec_en_disco(ruta):
     return (leer_meta_lote(ruta).get("numero_sec") or "").strip()
+
+
+def requerimiento_en_disco(ruta):
+    """Requerimiento de specs del lote, normalizado. {} si no tiene."""
+    return requerimiento.normalizar(leer_meta_lote(ruta).get("requerimiento"))
 
 
 def etiqueta_lote(lote):
@@ -434,10 +449,17 @@ def regenerar_lote(lote):
         f"<title>{cfg['tipo_doc']} - {lote['cliente']}</title>",
     )
 
+    # Las diferencias con lo pedido se calculan acá y no se guardan en el JSON:
+    # así siguen al requerimiento vigente de ESTA OT.
+    req = requerimiento_en_disco(lote["ruta"])
     entries = []
     for jdata in equipos:
         try:
-            entries.append(reconstruir_entry_desde_json(jdata))
+            entries.append(
+                reconstruir_entry_desde_json(
+                    jdata, requerimiento.diferencias_equipo(req, jdata)
+                )
+            )
         except Exception as e:
             print(f"No se pudo rearmar {jdata.get('SERIAL', '?')}: {e}")
     contenido += "\n".join(entries) + HTML_END
@@ -771,13 +793,20 @@ def normalizar_cliente(valor):
 def abrir_lote(lote):
     """
     Deja la carpeta del lote lista para recibir equipos. Si el lote ya existía
-    y no se escribió el segundo número, se conserva el que tenga la carpeta en
-    vez de borrarlo por dejar el campo vacío. Devuelve el mismo lote.
+    y no se escribió el segundo número o el requerimiento, se conservan los que
+    tenga la carpeta en vez de borrarlos por dejar los campos vacíos. Si el
+    requerimiento cambió, el HTML se rehace para que las alertas lo sigan.
+    Devuelve el mismo lote.
     """
     os.makedirs(lote["ruta"], exist_ok=True)
     if not lote["numero_sec"]:
         lote["numero_sec"] = numero_sec_en_disco(lote["ruta"])
+    previo = requerimiento_en_disco(lote["ruta"])
+    nuevo = requerimiento.normalizar(lote.get("requerimiento"))
+    lote["requerimiento"] = nuevo or previo
     guardar_meta_lote(lote)
+    if lote["requerimiento"] != previo and contar_equipos(lote["ruta"]):
+        regenerar_lote(lote)
     return lote
 
 

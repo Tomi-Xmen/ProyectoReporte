@@ -14,6 +14,12 @@ mueve bytes, así toda la lógica se prueba sin abrir un puerto.
     POST /api/v1/cargadores guardar la lista de cargadores {lote, pares} (ver guardar_cargadores)
     POST /api/v1/equipo     ficha de un equipo {lote, serial} (ver nucleo/fichas.py)
     POST /api/v1/equipo/editar  editar su JSON {lote, serial, version, cambios}
+    POST /api/v1/equipo/mover   pasarlo a otro lote abierto {lote, serial, destino}
+    POST /api/v1/equipo/quitar  sacarlo del lote, a la papelera {lote, serial}
+    POST /api/v1/lote/documento completar la guía/OT del lote {lote, numero_sec}
+    POST /api/v1/lote/resumen   qué revisar antes de cerrar {lote}
+    POST /api/v1/lote/cerrar    cerrar el lote, con backup {lote}
+    (ver nucleo/gestion_lote.py)
 
 Seguridad: el token viaja solo en el QR de emparejamiento; sin él todo
 responde 401. Se guarda en lector_celular.json (junto al programa) para que
@@ -21,8 +27,9 @@ el celular siga emparejado entre reinicios; "Código nuevo" en el panel lo
 cambia y desempareja a todos. El transporte además rechaza conexiones que no
 vengan de la red local.
 
-El celular NO cambia la OT activa del PC ni cierra lotes: trabaja sobre el
-lote que nombra en cada pedido, y el cierre sigue siendo una decisión del PC.
+El celular NO cambia cuál es la OT activa del PC: trabaja sobre el lote que
+nombra en cada pedido. Sí puede cerrar un lote (lo mismo que "Cerrar OT" del
+PC, que también deja sin OT activa si era la activa).
 """
 
 import hmac
@@ -33,7 +40,7 @@ import socket
 from collections import OrderedDict
 from datetime import datetime
 
-from . import fichas
+from . import fichas, gestion_lote
 from .escaneos import (
     TIPO_TRANSFORMADOR,
     TIPOS_CODIGO,
@@ -153,7 +160,20 @@ def describir_respuesta(r):
         return f"✅ {r['tipo']} registrado ({r['total']} en el lote)"
     if estado == "asignado":
         extra = f" (reemplazó a {r['reemplazo']})" if r.get("reemplazo") else ""
+        if r.get("desde"):
+            extra += f" (era de {r['desde']})"
         return f"🔌 Transformador → {r['equipo']}{extra}"
+    if estado == "leido":
+        de = f", hoy de {r['equipo']}" if r.get("equipo") else ""
+        return f"🔎 Transformador {r['sn_transf']} leído{de}: se elige el equipo"
+    if estado == "movido":
+        return f"↔️ {r['serial']} pasó a {r['destino']}"
+    if estado == "quitado":
+        return f"🗑️ {r['serial']} quitado del lote (quedan {r['total']})"
+    if estado == "documento":
+        return f"📄 Documento del lote: {r['numero_sec'] or 'sin cargar'}"
+    if estado == "cerrado":
+        return f"📦 Lote cerrado desde el celular ({r['total']} equipo(s))"
     if estado == "ya_estaba":
         return f"☑️ Ya estaba en el lote{' (' + r['equipo'] + ')' if r.get('equipo') else ''}"
     if estado == "en_otra_ot":
@@ -232,7 +252,7 @@ class ApiCelular:
             return e.codigo, {"error": e.error, "mensaje": e.mensaje}
         except LoteInvalido as e:
             return e.codigo, {"error": "lote", "titulo": e.titulo, "mensaje": e.mensaje}
-        except fichas.ErrorFicha as e:
+        except (fichas.ErrorFicha, gestion_lote.ErrorGestion) as e:
             return e.codigo, {"error": e.error, "mensaje": e.mensaje}
         except Exception as e:  # un bug no debe tumbar el servidor ni la app
             return 500, {"error": "interno", "mensaje": str(e) or type(e).__name__}
@@ -262,6 +282,11 @@ class ApiCelular:
                 self._lote(datos), self._texto(datos, "serial")
             ),
             ("POST", "/equipo/editar"): lambda: self._editar(datos),
+            ("POST", "/equipo/mover"): lambda: self._mover(datos),
+            ("POST", "/equipo/quitar"): lambda: self._quitar(datos),
+            ("POST", "/lote/documento"): lambda: self._documento(datos),
+            ("POST", "/lote/resumen"): lambda: gestion_lote.resumen_cierre(self._lote(datos)),
+            ("POST", "/lote/cerrar"): lambda: self._cerrar(datos),
         }
         if not ruta.startswith(PREFIJO):
             raise ErrorPedido(404, "ruta", f"Ruta desconocida: {ruta}")
@@ -322,6 +347,35 @@ class ApiCelular:
         self._avisar(lote, ficha["serial"], {"estado": "editado", "campos": sorted(cambios)})
         return ficha
 
+    # ── Gestión del lote (ver nucleo/gestion_lote.py) ────
+    def _mover(self, datos):
+        lote = self._lote(datos)
+        if not isinstance(datos.get("destino"), dict):
+            raise ErrorPedido(400, "dato", "Falta 'destino'.")
+        destino = self._lote({"lote": datos["destino"]})
+        r = gestion_lote.mover_equipo(lote, self._texto(datos, "serial"), destino)
+        self._avisar(lote, r["serial"], r)
+        return r
+
+    def _quitar(self, datos):
+        lote = self._lote(datos)
+        r = gestion_lote.quitar_equipo(lote, self._texto(datos, "serial"))
+        self._avisar(lote, r["serial"], r)
+        return r
+
+    def _documento(self, datos):
+        lote = gestion_lote.fijar_documento_secundario(
+            self._lote(datos), self._texto(datos, "numero_sec", obligatorio=False)
+        )
+        self._avisar(lote, lote["numero_sec"], {"estado": "documento", "numero_sec": lote["numero_sec"]})
+        return estado_lote(lote)
+
+    def _cerrar(self, datos):
+        lote = self._lote(datos)
+        r = gestion_lote.cerrar(lote)
+        self._avisar(lote, "", r)
+        return r
+
     # ── Escaneo ──────────────────────────────────────────
     def _escaneo(self, datos):
         """
@@ -331,7 +385,9 @@ class ApiCelular:
           "lecturas": [{"texto", "formato"}],   todo lo que la cámara vio junto
           "esperado": "Notebook" | … | null,    qué se está escaneando
           "tipo": opcional, el usuario eligió el tipo a mano (ignora reglas)
-          "serial_equipo": opcional, transformador para ESE equipo
+          "serial_equipo": opcional, transformador para ESE equipo (guiado)
+          "solo_leer": opcional, transformador: no asignar, decir qué se leyó
+          "reasignar": opcional, con serial_equipo: pasarlo aunque sea de otro
           "forzar": opcional, registrar aunque esté en otra OT
           "borrador": opcional, con un transformador: solo revisarlo, no
                       escribir (el celular lo suma a su lista; ver /cargadores)
@@ -343,6 +399,9 @@ class ApiCelular:
           sin_serial  — ningún código servía ('descartes' dice por qué)
           otro_tipo   — las reglas dicen que es otra cosa ('tipo' vs 'esperado')
           sin_tipo    — no se sabe qué es: el celular pregunta el tipo
+          leido       — con solo_leer: el cargador ('sn_transf') y de qué
+                        equipo es hoy ('equipo', o null); el celular elige
+                        el destino y lo manda con serial_equipo
         """
         id_escaneo = str(datos.get("id") or "")
         if id_escaneo and id_escaneo in self._recordadas:
@@ -372,6 +431,12 @@ class ApiCelular:
             respuesta = {"estado": "sin_tipo", "valor": valor}
         elif tipo == TIPO_TRANSFORMADOR and datos.get("borrador") is True:
             respuesta = revisar_transformador(lote, valor)
+        elif tipo == TIPO_TRANSFORMADOR and datos.get("solo_leer") is True:
+            respuesta = gestion_lote.leer_transformador(lote, valor)
+        elif tipo == TIPO_TRANSFORMADOR and datos.get("reasignar") is True and datos.get("serial_equipo"):
+            respuesta = gestion_lote.reasignar_transformador(
+                lote, valor, str(datos["serial_equipo"])
+            )
         elif tipo == TIPO_TRANSFORMADOR:
             respuesta = asignar_transformador(
                 lote, valor, serial_equipo=datos.get("serial_equipo") or None

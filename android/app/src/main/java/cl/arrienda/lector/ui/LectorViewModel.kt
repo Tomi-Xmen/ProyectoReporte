@@ -17,11 +17,15 @@ import cl.arrienda.lector.data.LoteAbierto
 import cl.arrienda.lector.data.LoteRef
 import cl.arrienda.lector.data.ParCargador
 import cl.arrienda.lector.data.PedidoCargadores
+import cl.arrienda.lector.data.Movimientos
 import cl.arrienda.lector.data.PedidoEditar
 import cl.arrienda.lector.data.PedidoEscaneo
+import cl.arrienda.lector.data.PedidoMover
 import cl.arrienda.lector.data.PedidoNuevoLote
 import cl.arrienda.lector.data.RespuestaEscaneo
 import cl.arrienda.lector.data.Resultado
+import cl.arrienda.lector.data.ResumenCierre
+import cl.arrienda.lector.data.Tipos
 import cl.arrienda.lector.escaneo.Estabilizador
 import cl.arrienda.lector.escaneo.Flujo
 import cl.arrienda.lector.escaneo.Modo
@@ -54,6 +58,11 @@ sealed interface Pregunta {
     data class SinTipo(val valor: String, val base: PedidoEscaneo) : Pregunta
     data class Reabrir(val mensaje: String, val pedido: PedidoNuevoLote) : Pregunta
     data class SalirSinGuardar(val cantidad: Int) : Pregunta
+
+    /** Cargador leído: el usuario toca a qué notebook va. [portador] es el que lo tiene hoy. */
+    data class ElegirEquipo(val snTransf: String, val portador: String?, val base: PedidoEscaneo) : Pregunta
+
+    data class Cerrar(val resumen: ResumenCierre) : Pregunta
 }
 
 data class EstadoUi(
@@ -204,13 +213,17 @@ class LectorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ── Lotes ────────────────────────────────────────────
-    fun cargarLotes(mensaje: String? = null) {
+    /** [aviso]: algo que salió bien y se cuenta en la lista (p. ej. "lote cerrado"). */
+    fun cargarLotes(mensaje: String? = null, aviso: Aviso? = null) {
         val api = api ?: return
         viewModelScope.launch {
             actualizar { it.copy(ocupado = true) }
             when (val r = api.lotes()) {
                 is Resultado.Ok -> actualizar {
-                    it.copy(pantalla = Pantalla.LOTES, lotes = r.valor, lote = null, ocupado = false, mensaje = mensaje)
+                    it.copy(
+                        pantalla = Pantalla.LOTES, lotes = r.valor, lote = null, ocupado = false,
+                        mensaje = mensaje, aviso = aviso,
+                    )
                 }
                 else -> {
                     falla(r)
@@ -297,7 +310,8 @@ class LectorViewModel(app: Application) : AndroidViewModel(app) {
                 lote = lote.ref,
                 lecturas = lecturas,
                 esperado = s.flujo.esperado,
-                borrador = if (s.flujo.modo == Modo.TRANSFORMADOR) true else null,
+                borrador = s.flujo.aLaLista.takeIf { it },
+                soloLeer = s.flujo.soloLeer.takeIf { it },
             ),
         )
     }
@@ -306,9 +320,17 @@ class LectorViewModel(app: Application) : AndroidViewModel(app) {
         if (texto.isNotBlank()) alLeer(listOf(Lectura(texto.trim(), "MANUAL")))
     }
 
+    /**
+     * Pedidos de escaneo en curso. Una respuesta puede disparar otro pedido
+     * (el cargador para un equipo elegido desde la ficha): "ocupado" se apaga
+     * recién cuando no queda ninguno, si no la cámara volvería a leer en medio.
+     */
+    private var enVuelo = 0
+
     private fun enviar(p: PedidoEscaneo) {
         val api = api ?: return
         viewModelScope.launch {
+            enVuelo++
             actualizar { it.copy(ocupado = true, pregunta = null) }
             when (val r = api.escanear(p)) {
                 is Resultado.Ok -> procesar(p, r.valor)
@@ -332,13 +354,18 @@ class LectorViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
             }
-            actualizar { it.copy(ocupado = false) }
+            enVuelo--
+            if (enVuelo == 0) actualizar { it.copy(ocupado = false) }
         }
     }
 
     private fun procesar(p: PedidoEscaneo, r: RespuestaEscaneo) {
         if (r.estado == "propuesto") {
             agregarAlBorrador(r.snTransf.orEmpty())
+            return
+        }
+        if (r.estado == "leido") {
+            alLeerCargador(p, r)
             return
         }
         val pregunta = when (r.estado) {
@@ -350,7 +377,12 @@ class LectorViewModel(app: Application) : AndroidViewModel(app) {
         }
         senal(nivel(r))
         actualizar {
-            it.copy(aviso = Aviso(describir(r), nivel(r)), pregunta = pregunta)
+            it.copy(flujo = it.flujo.trasRespuesta(r), aviso = Aviso(describir(r), nivel(r)), pregunta = pregunta)
+        }
+        // Asignado directo (elegir equipo, o desde la ficha): ese par ya no va en la lista.
+        if (r.estado == "asignado") {
+            r.equipo?.let(::sacarDelBorrador)
+            r.snTransf?.let { sn -> actualizar { s -> s.copy(borrador = s.borrador.filterNot { it.snTransf.equals(sn, ignoreCase = true) }) } }
         }
         if (r.estado in CAMBIAN_EL_LOTE) refrescarLote()
     }
@@ -381,6 +413,12 @@ class LectorViewModel(app: Application) : AndroidViewModel(app) {
     /** Quita uno de la lista; los que venían después NO se corren: cada uno ya tiene su equipo. */
     fun quitarDelBorrador(par: ParCargador) = actualizar {
         it.copy(borrador = it.borrador - par, erroresBorrador = it.erroresBorrador - par.snTransf)
+    }
+
+    /** El equipo se fue del lote o ya tiene cargador en el PC: su par de la lista sobra. */
+    private fun sacarDelBorrador(serial: String) = actualizar { s ->
+        val sobran = s.borrador.filter { it.serial.equals(serial, ignoreCase = true) }
+        s.copy(borrador = s.borrador - sobran.toSet(), erroresBorrador = s.erroresBorrador - sobran.map { it.snTransf }.toSet())
     }
 
     fun descartarBorrador() = actualizar {
@@ -475,6 +513,63 @@ class LectorViewModel(app: Application) : AndroidViewModel(app) {
     fun reabrir(p: Pregunta.Reabrir) = crearLote(p.pedido.copy(reabrir = true))
 
     fun cerrarPregunta() = actualizar { it.copy(pregunta = null) }
+
+    // ── Cargador: leerlo y elegir el equipo ──────────────
+    /** El PC dijo qué cargador se leyó: va al equipo pedido desde la ficha, o se pregunta a cuál. */
+    private fun alLeerCargador(p: PedidoEscaneo, r: RespuestaEscaneo) {
+        val sn = r.snTransf ?: return
+        val destino = estado.value.flujo.cargadorPara
+        if (destino != null) {
+            asignarCargador(p, sn, r.equipo, destino)
+            return
+        }
+        senal(Nivel.PREGUNTA)
+        actualizar { it.copy(aviso = Aviso(describir(r), Nivel.PREGUNTA), pregunta = Pregunta.ElegirEquipo(sn, r.equipo, p)) }
+    }
+
+    fun elegirEquipoParaCargador(p: Pregunta.ElegirEquipo, serial: String) =
+        asignarCargador(p.base, p.snTransf, p.portador, serial)
+
+    /** Si el cargador era de otro equipo, se le pasa a este (el PC se lo saca al anterior). */
+    private fun asignarCargador(base: PedidoEscaneo, sn: String, portador: String?, destino: String) {
+        if (portador != null && portador.equals(destino, ignoreCase = true)) {
+            senal(Nivel.AVISO)
+            actualizar {
+                it.copy(
+                    pregunta = null,
+                    flujo = it.flujo.sinCargadorPara(),
+                    aviso = Aviso("☑️ El cargador $sn ya era de $destino", Nivel.AVISO),
+                )
+            }
+            return
+        }
+        enviar(
+            base.copy(
+                id = nuevoId(),
+                lecturas = listOf(Lectura(sn)),
+                tipo = Tipos.TRANSFORMADOR,
+                esperado = Tipos.TRANSFORMADOR,
+                serialEquipo = destino,
+                soloLeer = null,
+                reasignar = if (portador != null) true else null,
+            ),
+        )
+    }
+
+    /** Desde la ficha: volver a la cámara para leer el cargador de ese equipo. */
+    fun escanearCargadorPara(serial: String) {
+        estabilizador.olvidar()
+        actualizar {
+            it.copy(
+                pantalla = Pantalla.ESCANEAR, ficha = null, mensaje = null, ocupado = false,
+                flujo = it.flujo.paraCargadorDe(serial),
+                aviso = Aviso("🔌 Escaneá el cargador para $serial", Nivel.AVISO),
+            )
+        }
+        refrescarSeguido()
+    }
+
+    fun cancelarCargadorPara() = actualizar { it.copy(flujo = it.flujo.sinCargadorPara(), aviso = null) }
 
     /**
      * Reenvía los pendientes de a uno y EN ORDEN: la hora en que el PC los
@@ -616,6 +711,146 @@ class LectorViewModel(app: Application) : AndroidViewModel(app) {
         estabilizador.olvidar()
         actualizar { it.copy(pantalla = Pantalla.ESCANEAR, ficha = null, mensaje = null, ocupado = false) }
         refrescarSeguido()
+    }
+
+    // ── Gestión: mover o quitar el equipo de la ficha ────
+    /** Los lotes abiertos, para elegir a cuál mover el equipo. */
+    fun pedirLotesDestino() {
+        val api = api ?: return
+        viewModelScope.launch {
+            (api.lotes() as? Resultado.Ok)?.let { r -> actualizar { it.copy(lotes = r.valor) } }
+        }
+    }
+
+    fun moverEquipo(destino: LoteRef) {
+        val api = api ?: return
+        val s = estado.value
+        val ref = s.lote?.ref ?: return
+        val ficha = s.ficha ?: return
+        if (s.ocupado) return
+        viewModelScope.launch {
+            actualizar { it.copy(ocupado = true, mensaje = null) }
+            when (val r = api.mover(PedidoMover(ref, ficha.serial, destino))) {
+                is Resultado.Ok -> {
+                    sacarDelBorrador(ficha.serial)
+                    volverDeFicha("↔️ ${r.valor.serial} pasó a ${r.valor.destino}")
+                }
+                else -> fallaEnFicha(r)
+            }
+        }
+    }
+
+    fun quitarEquipo() {
+        val api = api ?: return
+        val s = estado.value
+        val ref = s.lote?.ref ?: return
+        val ficha = s.ficha ?: return
+        if (s.ocupado) return
+        viewModelScope.launch {
+            actualizar { it.copy(ocupado = true, mensaje = null) }
+            when (val r = api.quitar(ref, ficha.serial)) {
+                is Resultado.Ok -> {
+                    sacarDelBorrador(ficha.serial)
+                    volverDeFicha("🗑️ ${r.valor.serial} quitado del lote (quedan ${r.valor.total})")
+                }
+                else -> fallaEnFicha(r)
+            }
+        }
+    }
+
+    private fun volverDeFicha(texto: String) {
+        senal(Nivel.OK)
+        estabilizador.olvidar()
+        actualizar {
+            it.copy(
+                pantalla = Pantalla.ESCANEAR, ficha = null, mensaje = null, ocupado = false,
+                aviso = Aviso(texto, Nivel.OK),
+            )
+        }
+        refrescarLote()
+        refrescarSeguido()
+    }
+
+    /** El error queda a la vista en la ficha; solo un 401 saca de ahí. */
+    private fun fallaEnFicha(r: Resultado<*>) {
+        senal(Nivel.ERROR)
+        if (r is Resultado.Rechazado && r.codigo == 401) {
+            falla(r)
+            return
+        }
+        val texto = (r as? Resultado.Rechazado)?.error?.mensaje ?: "📵 Sin conexión con el PC."
+        actualizar { it.copy(ocupado = false, mensaje = "❌ $texto") }
+    }
+
+    // ── Gestión: documento y cierre del lote ─────────────
+    /** Carga o corrige la guía (entrega) u OT (retiro) del lote, en TODOS sus equipos. */
+    fun fijarDocumento(numeroSec: String) {
+        val api = api ?: return
+        val ref = estado.value.lote?.ref ?: return
+        if (estado.value.ocupado) return
+        viewModelScope.launch {
+            actualizar { it.copy(ocupado = true) }
+            when (val r = api.documento(ref, numeroSec.trim())) {
+                is Resultado.Ok -> {
+                    senal(Nivel.OK)
+                    val doc = if (r.valor.mov == Movimientos.ENTREGA) "Guía" else "OT"
+                    val valor = r.valor.numeroSec.ifBlank { "sin cargar" }
+                    actualizar {
+                        it.copy(lote = r.valor, ocupado = false, aviso = Aviso("📄 $doc del lote: $valor (en todos los equipos)", Nivel.OK))
+                    }
+                }
+                else -> fallaEnLote(r)
+            }
+        }
+    }
+
+    fun pedirCierre() {
+        val api = api ?: return
+        val ref = estado.value.lote?.ref ?: return
+        if (estado.value.ocupado) return
+        val sinGuardar = estado.value.borrador.size
+        if (sinGuardar > 0) {
+            senal(Nivel.ERROR)
+            actualizar { it.copy(aviso = Aviso("⚠️ Hay $sinGuardar cargador(es) sin guardar: guardá o descartá la lista antes de cerrar.", Nivel.ERROR)) }
+            return
+        }
+        viewModelScope.launch {
+            actualizar { it.copy(ocupado = true) }
+            when (val r = api.resumenCierre(ref)) {
+                is Resultado.Ok -> actualizar { it.copy(ocupado = false, pregunta = Pregunta.Cerrar(r.valor)) }
+                else -> fallaEnLote(r)
+            }
+        }
+    }
+
+    fun cerrarLote() {
+        val api = api ?: return
+        val ref = estado.value.lote?.ref ?: return
+        viewModelScope.launch {
+            actualizar { it.copy(ocupado = true, pregunta = null) }
+            when (val r = api.cerrar(ref)) {
+                is Resultado.Ok -> {
+                    senal(Nivel.OK)
+                    estabilizador.olvidar()
+                    val bk = r.valor.backup?.let { " Backup: $it" } ?: ""
+                    cargarLotes(aviso = Aviso("📦 ${r.valor.etiqueta} cerrado con ${r.valor.total} equipo(s).$bk", Nivel.OK))
+                }
+                else -> fallaEnLote(r)
+            }
+        }
+    }
+
+    /** 401 desempareja; si el lote ya no está abierto se vuelve a la lista; lo demás es un aviso. */
+    private fun fallaEnLote(r: Resultado<*>) {
+        senal(Nivel.ERROR)
+        when {
+            r is Resultado.Rechazado && r.codigo == 401 -> falla(r)
+            r is Resultado.Rechazado && r.error.error == "lote" -> cargarLotes(r.error.mensaje)
+            else -> {
+                val texto = (r as? Resultado.Rechazado)?.error?.mensaje ?: "📵 Sin conexión con el PC."
+                actualizar { it.copy(ocupado = false, pregunta = null, aviso = Aviso("❌ $texto", Nivel.ERROR)) }
+            }
+        }
     }
 
     // ── Modo ─────────────────────────────────────────────

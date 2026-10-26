@@ -8,7 +8,7 @@ enum class Nivel { OK, AVISO, ERROR, PREGUNTA }
 fun nivel(r: RespuestaEscaneo): Nivel = when (r.estado) {
     "registrado", "asignado", "propuesto" -> Nivel.OK
     "ya_estaba" -> Nivel.AVISO
-    "en_otra_ot", "otro_tipo", "elegir", "sin_tipo" -> Nivel.PREGUNTA
+    "en_otra_ot", "otro_tipo", "elegir", "sin_tipo", "leido" -> Nivel.PREGUNTA
     else -> Nivel.ERROR // duplicado, equipo_no_encontrado, sin_equipo_pendiente, es_equipo, invalido, sin_serial
 }
 
@@ -34,7 +34,9 @@ fun reenvio(r: RespuestaEscaneo): Reenvio = when (r.estado) {
 fun describir(r: RespuestaEscaneo): String = when (r.estado) {
     "registrado" -> "✅ ${r.tipo} ${r.serial} registrado (${r.total} en el lote)"
     "asignado" -> "🔌 Cargador ${r.snTransf} → ${r.equipo}" +
-        (r.reemplazo?.let { " (reemplazó a $it)" } ?: "")
+        (r.reemplazo?.let { " (reemplazó a $it)" } ?: "") +
+        (r.desde?.let { " (era de $it)" } ?: "")
+    "leido" -> "🔎 Cargador ${r.snTransf}" + (r.equipo?.let { ", hoy de $it" } ?: "") + ": elegí el equipo"
     "ya_estaba" ->
         if (r.snTransf != null) "☑️ El cargador ${r.snTransf} ya era de ${r.equipo}"
         else "☑️ ${r.serial} ya estaba en el lote"

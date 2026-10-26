@@ -9,9 +9,12 @@ import cl.arrienda.lector.data.EstadoPc
 import cl.arrienda.lector.data.FichaEquipo
 import cl.arrienda.lector.data.ParCargador
 import cl.arrienda.lector.data.RespuestaCargadores
+import cl.arrienda.lector.data.RespuestaAccion
+import cl.arrienda.lector.data.RespuestaCierre
 import cl.arrienda.lector.data.RespuestaClientes
 import cl.arrienda.lector.data.RespuestaEscaneo
 import cl.arrienda.lector.data.RespuestaLotes
+import cl.arrienda.lector.data.ResumenCierre
 import cl.arrienda.lector.escaneo.Nivel
 import cl.arrienda.lector.escaneo.Reenvio
 import cl.arrienda.lector.escaneo.describir
@@ -139,17 +142,17 @@ class ContratoTest {
 
     @Test
     fun `lista de cargadores guardada o rechazada`() {
-        assertEquals("TR-0100", escaneo("escaneo_borrador").snTransf)
+        assertEquals("TR-0200", escaneo("escaneo_borrador").snTransf)
         assertEquals("propuesto", escaneo("escaneo_borrador").estado)
 
         val ok = cuerpo("cargadores_guardado", RespuestaCargadores.serializer())
         assertEquals("guardado", ok.estado)
-        assertEquals(listOf(ParCargador("5CD805NUEV", "TR-0100")), ok.guardados)
+        assertEquals(listOf(ParCargador("5CD805NUEV", "TR-0200")), ok.guardados)
         assertEquals(1, ok.nuevos)
 
         val no = cuerpo("cargadores_rechazado", RespuestaCargadores.serializer())
         assertEquals("rechazado", no.estado)
-        assertEquals("TR-0101", no.errores.single().snTransf)
+        assertEquals("TR-0201", no.errores.single().snTransf)
         assertTrue(no.errores.single().motivo.isNotBlank())
     }
 
@@ -181,6 +184,56 @@ class ContratoTest {
         assertEquals("cambiado", cuerpo("equipo_cambiado", ErrorApi.serializer()).error)
         assertEquals(409, codigo("equipo_transformador_duplicado"))
         assertEquals("duplicado", cuerpo("equipo_transformador_duplicado", ErrorApi.serializer()).error)
+    }
+
+    @Test
+    fun `cargador leido y pasado de un equipo a otro`() {
+        val libre = escaneo("escaneo_leido_libre")
+        assertEquals("leido", libre.estado)
+        assertEquals("TR-0100", libre.snTransf)
+        assertNull(libre.equipo)
+        assertEquals(Nivel.PREGUNTA, nivel(libre))
+
+        val leido = escaneo("escaneo_leido")
+        assertEquals("5CD805DVNV", leido.equipo)
+        assertTrue("5CD805DVNV" in describir(leido))
+
+        val pasado = escaneo("escaneo_reasignado")
+        assertEquals("asignado", pasado.estado)
+        assertEquals("5CD805ABCD", pasado.equipo)
+        assertEquals("5CD805DVNV", pasado.desde)
+        assertEquals("TR-0003", pasado.reemplazo)
+        assertTrue("era de 5CD805DVNV" in describir(pasado))
+    }
+
+    @Test
+    fun `gestion del lote`() {
+        val resumen = cuerpo("lote_resumen", ResumenCierre.serializer())
+        assertEquals(4, resumen.equipos) // 5CD805NUEV llegó con la lista de cargadores, ya con el suyo
+        assertEquals(listOf("5CD805DVNV"), resumen.sinCargador)
+        assertNull(resumen.faltaDocumento)
+
+        val conGuia = cuerpo("lote_documento", EstadoLote.serializer())
+        assertEquals("G-10", conGuia.numeroSec)
+        assertEquals(400, codigo("lote_documento_invalido"))
+
+        val movido = cuerpo("equipo_mover", RespuestaAccion.serializer())
+        assertEquals("movido", movido.estado)
+        assertEquals("MON12345", movido.serial)
+        assertTrue(movido.destino!!.startsWith("BETA"))
+        assertEquals("mismo_lote", cuerpo("equipo_mover_mismo_lote", ErrorApi.serializer()).error)
+
+        val quitado = cuerpo("equipo_quitar", RespuestaAccion.serializer())
+        assertEquals("quitado", quitado.estado)
+        assertEquals(2, quitado.total)
+        assertEquals(404, codigo("equipo_quitar_inexistente"))
+
+        val cerrado = cuerpo("lote_cerrar", RespuestaCierre.serializer())
+        assertEquals("cerrado", cerrado.estado)
+        assertEquals(2, cerrado.total)
+        assertTrue(cerrado.backup!!.endsWith(".zip"))
+        assertEquals(409, codigo("lote_cerrado_resumen"))
+        assertEquals("lote", cuerpo("lote_cerrado_resumen", ErrorApi.serializer()).error)
     }
 
     @Test

@@ -8,12 +8,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -42,6 +44,7 @@ import cl.arrienda.lector.data.DatosEquipo
 import cl.arrienda.lector.data.Disco
 import cl.arrienda.lector.data.FichaEquipo
 import cl.arrienda.lector.data.HardwareEquipo
+import cl.arrienda.lector.data.Tipos
 
 /**
  * Ficha de un equipo del lote, toda editable menos el serial. Guardar
@@ -57,6 +60,8 @@ fun PantallaEquipo(estado: EstadoUi, vm: LectorViewModel) {
     var componentes by remember(ficha.version) { mutableStateOf(ficha.componentes) }
     var hardware by remember(ficha.version) { mutableStateOf(ficha.hardware) }
     var confirmarSalida by remember { mutableStateOf(false) }
+    var elegirDestino by remember { mutableStateOf(false) }
+    var confirmarQuitar by remember { mutableStateOf(false) }
     val sinGuardar = !CambiosEquipo.entre(ficha, datos, componentes, hardware).vacio
 
     BackHandler { if (sinGuardar) confirmarSalida = true else vm.cerrarEquipo() }
@@ -72,6 +77,19 @@ fun PantallaEquipo(estado: EstadoUi, vm: LectorViewModel) {
         }
 
         LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            item {
+                AccionesEquipo(
+                    esNotebook = ficha.tipo == Tipos.NOTEBOOK,
+                    sinGuardar = sinGuardar,
+                    habilitadas = !sinGuardar && !estado.ocupado,
+                    escanearCargador = { vm.escanearCargadorPara(ficha.serial) },
+                    mover = {
+                        vm.pedirLotesDestino()
+                        elegirDestino = true
+                    },
+                    quitar = { confirmarQuitar = true },
+                )
+            }
             item {
                 Seccion("Hardware")
                 val nota = if (ficha.sinHardware) "Leído solo por su código: sin escaneo de hardware. Podés cargarlo a mano."
@@ -134,6 +152,88 @@ fun PantallaEquipo(estado: EstadoUi, vm: LectorViewModel) {
             dismissButton = { TextButton(onClick = { confirmarSalida = false }) { Text("Seguir editando") } },
         )
     }
+
+    if (elegirDestino) {
+        val actual = estado.lote?.ref
+        val destinos = estado.lotes.filter { it.ref != actual }
+        AlertDialog(
+            onDismissRequest = { elegirDestino = false },
+            title = { Text("Mover ${ficha.serial} a…") },
+            text = {
+                // Column con scroll: el AlertDialog no admite listas perezosas.
+                Column(
+                    Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        "Se lleva todo lo cargado (cargador, observaciones, revisión).",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    if (destinos.isEmpty()) Text("No hay otros lotes abiertos. Creá uno desde la lista de lotes.")
+                    destinos.forEach { l ->
+                        OutlinedButton(
+                            onClick = {
+                                elegirDestino = false
+                                vm.moverEquipo(l.ref)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(Modifier.fillMaxWidth()) {
+                                Text(l.etiqueta, fontWeight = FontWeight.Bold)
+                                Text("${l.equipos} equipo(s)", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { elegirDestino = false }) { Text("Cancelar") } },
+        )
+    }
+
+    if (confirmarQuitar) {
+        AlertDialog(
+            onDismissRequest = { confirmarQuitar = false },
+            title = { Text("¿Quitar ${ficha.serial} del lote?") },
+            text = {
+                Text(
+                    "Sale del reporte y del FUSIONADO. No se borra: queda en la papelera " +
+                        "del PC (Reportes_Guardados/_PAPELERA) por si hay que recuperarlo.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmarQuitar = false
+                    vm.quitarEquipo()
+                }) { Text("Quitar") }
+            },
+            dismissButton = { TextButton(onClick = { confirmarQuitar = false }) { Text("Cancelar") } },
+        )
+    }
+}
+
+/** Lo que se hace con el equipo entero. Con cambios sin guardar se bloquea: primero guardar. */
+@Composable
+private fun AccionesEquipo(
+    esNotebook: Boolean,
+    sinGuardar: Boolean,
+    habilitadas: Boolean,
+    escanearCargador: () -> Unit,
+    mover: () -> Unit,
+    quitar: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (esNotebook) {
+                OutlinedButton(onClick = escanearCargador, enabled = habilitadas) { Text("🔌 Escanear cargador") }
+            }
+            OutlinedButton(onClick = mover, enabled = habilitadas) { Text("↔️ Mover") }
+            OutlinedButton(onClick = quitar, enabled = habilitadas) { Text("🗑️ Quitar") }
+        }
+        if (sinGuardar) {
+            Text("Guardá o deshacé los cambios para usar estas acciones.", style = MaterialTheme.typography.bodySmall)
+        }
+    }
 }
 
 @Composable
@@ -142,6 +242,9 @@ private fun CamposDatos(ficha: FichaEquipo, datos: DatosEquipo, cambiar: (DatosE
         Campo("Modelo", datos.modelo) { cambiar(datos.copy(modelo = it)) }
         Campo("Licencia de Windows", datos.snWin, monoespaciada = true) { cambiar(datos.copy(snWin = it)) }
         Campo("Serie del transformador", datos.snTransf, monoespaciada = true) { cambiar(datos.copy(snTransf = it)) }
+        if (datos.snTransf.isNotBlank()) {
+            TextButton(onClick = { cambiar(datos.copy(snTransf = "")) }) { Text("✕ Dejar sin cargador (después Guardar)") }
+        }
 
         Text("Office", style = MaterialTheme.typography.labelMedium)
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {

@@ -120,6 +120,10 @@ data class PedidoEscaneo(
     val forzar: Boolean? = null,
     /** Con un cargador: el PC solo lo revisa, no escribe (va a la lista y se guarda con el botón). */
     val borrador: Boolean? = null,
+    /** Cargador: que el PC diga qué se leyó y de quién es, sin asignarlo (estado "leido"). */
+    @SerialName("solo_leer") val soloLeer: Boolean? = null,
+    /** Con [serialEquipo]: pasarlo a ese equipo aunque hoy sea de otro. */
+    val reasignar: Boolean? = null,
 )
 
 @Serializable
@@ -137,6 +141,8 @@ data class RespuestaEscaneo(
     @SerialName("sn_transf") val snTransf: String? = null,
     val equipo: String? = null,
     val reemplazo: String? = null,
+    /** "asignado" con reasignar: el equipo que tenía el cargador antes. */
+    val desde: String? = null,
     val candidatos: List<String> = emptyList(),
     val valor: String? = null,
     val esperado: String? = null,
@@ -265,4 +271,41 @@ data class PedidoEditar(
     val serial: String,
     val version: String,
     val cambios: CambiosEquipo,
+)
+
+// ── Gestión del lote (ver inventario/nucleo/gestion_lote.py) ──────────
+
+@Serializable
+data class PedidoMover(val lote: LoteRef, val serial: String, val destino: LoteRef)
+
+/** El documento que la carpeta no codifica: la guía de una entrega, la OT de un retiro. */
+@Serializable
+data class PedidoDocumento(val lote: LoteRef, @SerialName("numero_sec") val numeroSec: String)
+
+/** Respuesta de mover ("movido") y quitar ("quitado") un equipo. */
+@Serializable
+data class RespuestaAccion(
+    val estado: String,
+    val serial: String? = null,
+    val destino: String? = null,
+    val total: Int? = null,
+)
+
+/** Lo que conviene mirar antes de cerrar el lote. */
+@Serializable
+data class ResumenCierre(
+    val etiqueta: String,
+    val equipos: Int,
+    @SerialName("sin_cargador") val sinCargador: List<String> = emptyList(),
+    @SerialName("con_fallas") val conFallas: Int = 0,
+    /** "guía" u "OT" si el lote no tiene cargado su segundo documento. */
+    @SerialName("falta_documento") val faltaDocumento: String? = null,
+)
+
+@Serializable
+data class RespuestaCierre(
+    val estado: String,
+    val etiqueta: String,
+    val total: Int,
+    val backup: String? = null,
 )

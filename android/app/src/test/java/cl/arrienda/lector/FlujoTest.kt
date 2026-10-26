@@ -4,15 +4,21 @@ import cl.arrienda.lector.data.Emparejamiento
 import cl.arrienda.lector.data.EquipoLote
 import cl.arrienda.lector.data.EstadoLote
 import cl.arrienda.lector.data.ParCargador
+import cl.arrienda.lector.data.RespuestaEscaneo
 import cl.arrienda.lector.data.Tipos
 import cl.arrienda.lector.escaneo.Flujo
 import cl.arrienda.lector.escaneo.Modo
 import cl.arrienda.lector.escaneo.proximoSinCargador
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FlujoTest {
+    private fun r(estado: String, serial: String? = null, tipo: String? = Tipos.NOTEBOOK) =
+        RespuestaEscaneo(estado = estado, serial = serial, tipo = tipo)
+
     private fun lote(vararg equipos: EquipoLote) =
         EstadoLote(mov = "Entrega", cliente = "ACME", numero = "553", etiqueta = "ACME · OT-553", equipos = equipos.toList())
 
@@ -40,6 +46,35 @@ class FlujoTest {
         assertNull(proximoSinCargador(l, lista + ParCargador("5CD0000003", "WHHRE0A1RK0003")))
         assertNull(proximoSinCargador(lote(EquipoLote("5CD0000001", Tipos.NOTEBOOK, snTransf = "W1"))))
         assertEquals("Todos los notebooks tienen cargador", Flujo().indicacion(lote()))
+    }
+
+    @Test
+    fun `cargador y elegir equipo solo lee`() {
+        val f = Flujo(Modo.CARGADOR_ELEGIR)
+        assertEquals(Tipos.TRANSFORMADOR, f.esperado)
+        assertTrue(f.soloLeer)
+        assertFalse(f.aLaLista) // se guarda en el momento, sin lista
+        assertEquals(f, f.trasRespuesta(r("asignado", tipo = null)))
+        assertFalse(Flujo(Modo.TRANSFORMADOR).soloLeer)
+        assertTrue(Flujo(Modo.TRANSFORMADOR).aLaLista)
+    }
+
+    @Test
+    fun `cargador pedido desde la ficha vale para una lectura`() {
+        // Se estaba armando la lista de cargadores: este va directo, no a la lista.
+        val antes = Flujo(Modo.TRANSFORMADOR)
+        val f = antes.paraCargadorDe("5CD805ABCD")
+        assertEquals(Tipos.TRANSFORMADOR, f.esperado)
+        assertTrue(f.soloLeer)
+        assertFalse(f.aLaLista)
+        assertTrue("5CD805ABCD" in f.indicacion(null))
+        assertEquals(Tipos.TRANSFORMADOR, Flujo(Modo.NOTEBOOK).paraCargadorDe("X").esperado)
+
+        // "leido" no lo termina: falta asignarlo. "asignado" sí, y se vuelve a como estaba.
+        assertEquals(f, f.trasRespuesta(r("leido", tipo = null)))
+        assertEquals(antes, f.trasRespuesta(r("asignado", tipo = null)))
+        assertEquals(antes, f.sinCargadorPara())
+        assertNull(f.conModo(Modo.NOTEBOOK).cargadorPara)
     }
 
     @Test

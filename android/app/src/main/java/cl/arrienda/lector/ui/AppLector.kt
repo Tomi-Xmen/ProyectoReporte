@@ -10,7 +10,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -28,10 +31,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import cl.arrienda.lector.data.EstadoLote
 import cl.arrienda.lector.data.Tipos
 
 @Composable
@@ -60,7 +66,7 @@ fun AppLector(vm: LectorViewModel) {
         Pantalla.EQUIPO -> PantallaEquipo(estado, vm)
     }
 
-    estado.pregunta?.let { DialogoPregunta(it, vm) }
+    estado.pregunta?.let { DialogoPregunta(it, estado.lote, vm) }
 }
 
 /** Pide el permiso de cámara antes de mostrar [content]. */
@@ -99,7 +105,7 @@ fun ConPermisoCamara(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun DialogoPregunta(p: Pregunta, vm: LectorViewModel) {
+private fun DialogoPregunta(p: Pregunta, lote: EstadoLote?, vm: LectorViewModel) {
     when (p) {
         is Pregunta.Elegir -> AlertDialog(
             onDismissRequest = vm::cerrarPregunta,
@@ -158,5 +164,72 @@ private fun DialogoPregunta(p: Pregunta, vm: LectorViewModel) {
             confirmButton = { TextButton(onClick = { vm.reabrir(p) }) { Text("Reabrir") } },
             dismissButton = { TextButton(onClick = vm::cerrarPregunta) { Text("No") } },
         )
+        is Pregunta.ElegirEquipo -> DialogoElegirEquipo(p, lote, vm)
+        is Pregunta.Cerrar -> DialogoCerrar(p, vm)
     }
+}
+
+/** A qué notebook va el cargador leído: primero los que no tienen cargador. */
+@Composable
+private fun DialogoElegirEquipo(p: Pregunta.ElegirEquipo, lote: EstadoLote?, vm: LectorViewModel) {
+    val notebooks = lote?.equipos.orEmpty()
+        .filter { it.tipo == Tipos.NOTEBOOK }
+        .sortedBy { it.snTransf != null }
+    AlertDialog(
+        onDismissRequest = vm::cerrarPregunta,
+        title = { Text("¿A qué equipo va ${p.snTransf}?") },
+        text = {
+            // Column con scroll y no LazyColumn: el AlertDialog mide su
+            // contenido con intrínsecos, que una lista perezosa no soporta.
+            Column(
+                Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                p.portador?.let {
+                    Text("Hoy es de $it: el equipo que elijas se lo lleva.", style = MaterialTheme.typography.bodySmall)
+                }
+                if (notebooks.isEmpty()) Text("Este lote no tiene notebooks.")
+                notebooks.forEach { e ->
+                    val detalle = when {
+                        e.snTransf == null -> "sin cargador"
+                        e.snTransf.equals(p.snTransf, ignoreCase = true) -> "ya tiene este cargador"
+                        else -> "🔌 ${e.snTransf} (se reemplaza)"
+                    }
+                    OutlinedButton(onClick = { vm.elegirEquipoParaCargador(p, e.serial) }, Modifier.fillMaxWidth()) {
+                        Column(Modifier.fillMaxWidth()) {
+                            Text(e.serial, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                            Text(detalle, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = vm::cerrarPregunta) { Text("Cancelar") } },
+    )
+}
+
+@Composable
+private fun DialogoCerrar(p: Pregunta.Cerrar, vm: LectorViewModel) {
+    val r = p.resumen
+    AlertDialog(
+        onDismissRequest = vm::cerrarPregunta,
+        title = { Text("¿Cerrar ${r.etiqueta}?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    "${r.equipos} equipo(s). Se regenera el FUSIONADO, se hace un backup " +
+                        "y el lote deja de recibir escaneos.",
+                )
+                r.faltaDocumento?.let { Text("⚠️ Falta el N° de $it del lote.") }
+                if (r.sinCargador.isNotEmpty()) {
+                    val lista = r.sinCargador.take(5).joinToString(", ") + if (r.sinCargador.size > 5) "…" else ""
+                    Text("⚠️ ${r.sinCargador.size} notebook(s) sin cargador: $lista")
+                }
+                if (r.conFallas > 0) Text("⚠️ ${r.conFallas} equipo(s) con fallas.")
+            }
+        },
+        confirmButton = { TextButton(onClick = vm::cerrarLote) { Text("Cerrar lote") } },
+        dismissButton = { TextButton(onClick = vm::cerrarPregunta) { Text("Cancelar") } },
+    )
 }

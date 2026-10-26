@@ -264,7 +264,7 @@
     "cuerpo": {
       "serial": "5CD805DVNV",
       "tipo": "Notebook",
-      "version": "c10db9c59226",
+      "version": "464eb0eb6538",
       "sin_hardware": false,
       "tiene_fallas": false,
       "datos": {
@@ -371,7 +371,7 @@
     "cuerpo": {
       "serial": "MON12345",
       "tipo": "Monitor",
-      "version": "a21ab2ce9c43",
+      "version": "52d7077d2ea9",
       "sin_hardware": true,
       "tiene_fallas": false,
       "datos": {
@@ -440,7 +440,7 @@
           "obs": ""
         }
       ],
-      "fecha": "16/10/2026 15:24",
+      "fecha": "19/10/2026 12:25",
       "hardware": {
         "host": "",
         "cpu": "",
@@ -478,7 +478,7 @@
     "cuerpo": {
       "serial": "5CD805DVNV",
       "tipo": "Notebook",
-      "version": "f22c1a6dedd6",
+      "version": "de5ab9efcaea",
       "sin_hardware": false,
       "tiene_fallas": false,
       "datos": {
@@ -592,7 +592,7 @@
     "cuerpo": {
       "serial": "5CD805DVNV",
       "tipo": "Notebook",
-      "version": "726a66942086",
+      "version": "4c03ae2d138e",
       "sin_hardware": false,
       "tiene_fallas": false,
       "datos": {
@@ -701,6 +701,44 @@
     "cuerpo": {
       "error": "duplicado",
       "mensaje": "El transformador TR-0009 ya es de 5CD805DVNV."
+    }
+  },
+  "escaneo_borrador": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "propuesto",
+      "sn_transf": "TR-0100",
+      "descartes": [],
+      "lote": "ACME · OT-553 · ENTREGAS"
+    }
+  },
+  "cargadores_guardado": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "guardado",
+      "guardados": [
+        {
+          "serial": "5CD805NUEV",
+          "sn_transf": "TR-0100"
+        }
+      ],
+      "nuevos": 1,
+      "sin_cargador": 0,
+      "lote": "ACME · OT-553 · ENTREGAS"
+    }
+  },
+  "cargadores_rechazado": {
+    "codigo": 200,
+    "cuerpo": {
+      "estado": "rechazado",
+      "errores": [
+        {
+          "serial": "NOEXISTE1",
+          "sn_transf": "TR-0101",
+          "motivo": "El equipo NOEXISTE1 no está en el lote."
+        }
+      ],
+      "lote": "ACME · OT-553 · ENTREGAS"
     }
   }
 }

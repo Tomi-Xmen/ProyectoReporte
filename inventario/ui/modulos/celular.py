@@ -2,16 +2,19 @@
 Panel del lector celular: enciende el servidor, muestra el QR para emparejar
 el celular y registra cada escaneo que llega.
 
-El servidor vive mientras esta ventana está abierta y se apaga al cerrarla:
-"panel abierto = celular conectado". La ventana no es modal, así que se puede
-seguir usando el menú (escanear hardware, transformadores…) al mismo tiempo.
-Viene apagado: si nadie lo enciende, no se abre ningún puerto.
+Una vez encendido, el servidor sigue andando aunque se cierre esta ventana:
+se apaga solo con "Apagar" o al salir del programa. Con "Encender solo al
+abrir el programa" arranca junto con la app y con el mismo código, así el
+celular queda emparejado de un día para otro sin escanear el QR otra vez.
+La ventana no es modal: se puede seguir usando el menú al mismo tiempo.
+Viene apagado: si nadie lo enciende nunca, no se abre ningún puerto.
 """
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QHBoxLayout,
@@ -20,9 +23,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...nucleo.api_celular import ApiCelular, describir_respuesta
+from ...nucleo.api_celular import (
+    ApiCelular,
+    cargar_preferencias,
+    describir_respuesta,
+    guardar_preferencias,
+    token_nuevo,
+)
 from .. import avisos, reporte_vivo
-from ..servidor_celular import ServidorCelular, interfaces_locales
+from ..servidor_celular import PUERTO_DEFAULT, ServidorCelular, interfaces_locales
 from ..widgets import Banner, boton, etiqueta, tabla
 
 # El QR se dibuja con segno (Python puro, sin dependencias). Si falta, el
@@ -95,8 +104,8 @@ class PanelCelular(QDialog):
             etiqueta(
                 "Usá el celular como lector de códigos para las OT y guías abiertas. "
                 "El celular y esta PC tienen que estar en la misma red Wi-Fi. "
-                "Mientras esta ventana esté abierta el celular puede registrar "
-                "equipos; al cerrarla se desconecta.",
+                "Encendido, el celular sigue conectado aunque cierres esta "
+                "ventana; se desconecta con \"Apagar\" o al salir del programa.",
                 "ayuda",
                 ajustar=True,
             )
@@ -113,6 +122,19 @@ class PanelCelular(QDialog):
         self.btn_encender = boton("▶ Encender", self._alternar, variante="exito")
         fila.addWidget(self.btn_encender)
         layout.addLayout(fila)
+
+        self.prefs = cargar_preferencias()
+        opciones = QHBoxLayout()
+        self.chk_al_iniciar = QCheckBox("Encender solo al abrir el programa (el celular queda emparejado)")
+        self.chk_al_iniciar.setChecked(self.prefs["encender_al_iniciar"] or not self.prefs["token"])
+        self.chk_al_iniciar.toggled.connect(self._cambio_al_iniciar)
+        opciones.addWidget(self.chk_al_iniciar, 1)
+        self.btn_codigo = boton("🔄 Código nuevo", self._codigo_nuevo)
+        self.btn_codigo.setToolTip(
+            "Cambia el código del QR: todo celular emparejado tiene que escanearlo de nuevo."
+        )
+        opciones.addWidget(self.btn_codigo)
+        layout.addLayout(opciones)
 
         centro = QHBoxLayout()
         self.qr = VistaQR()
@@ -172,10 +194,14 @@ class PanelCelular(QDialog):
         else:
             self.encender()
 
-    def encender(self):
+    def encender(self, silencioso=False):
+        """silencioso: al abrir el programa no se muestran ventanas de error."""
         if self._ip() is None:
             self._cargar_ips()
         if self._ip() is None:
+            if silencioso:
+                self.banner.fijar("No se encendió solo: esta PC no tiene IP de red local.", "aviso")
+                return False
             avisos.aviso(
                 self,
                 "Sin red local",
@@ -184,13 +210,19 @@ class PanelCelular(QDialog):
             )
             return False
 
-        # Token nuevo en cada encendido: apagar y encender desempareja a
-        # cualquier celular que tuviera el QR anterior.
-        self.api = ApiCelular(al_evento=self._registrar_evento)
+        # El mismo token y puerto de la última vez: el celular emparejado
+        # vuelve a conectarse solo. "Código nuevo" lo cambia.
+        if not self.prefs["token"]:
+            self.prefs["token"] = token_nuevo()
+        self.api = ApiCelular(token=self.prefs["token"], al_evento=self._registrar_evento)
         self.servidor = ServidorCelular(self.api, self)
         self.servidor.contacto.connect(self._contacto)
-        if not self.servidor.iniciar():
+        puerto = self.servidor.iniciar(self.prefs["puerto"] or PUERTO_DEFAULT)
+        if not puerto:
             self.servidor = None
+            if silencioso:
+                self.banner.fijar("No se encendió solo: los puertos del lector están ocupados.", "aviso")
+                return False
             avisos.error(
                 self,
                 "No se pudo encender",
@@ -198,12 +230,17 @@ class PanelCelular(QDialog):
             )
             return False
 
+        self.prefs["puerto"] = puerto
+        self.prefs["encender_al_iniciar"] = self.chk_al_iniciar.isChecked()
+        guardar_preferencias(self.prefs)
+
         self.btn_encender.setText("■ Apagar")
         self.btn_encender.setProperty("variante", "envio")
         self.btn_encender.style().polish(self.btn_encender)
         self.btn_copiar.setEnabled(True)
         self.lbl_contacto.setText("Esperando al celular…")
         self._refrescar_qr()
+        self._refrescar_menu()
         return True
 
     def apagar(self):
@@ -213,6 +250,25 @@ class PanelCelular(QDialog):
         self.api = None
         self.banner.fijar("Apagado. El celular ya no puede registrar equipos.", "info")
         self._mostrar_apagado()
+        self._refrescar_menu()
+
+    def _cambio_al_iniciar(self, marcado):
+        self.prefs["encender_al_iniciar"] = marcado
+        guardar_preferencias(self.prefs)
+
+    def _codigo_nuevo(self):
+        if not avisos.confirmar(
+            self,
+            "Código nuevo",
+            "Todo celular emparejado se desconecta y tiene que escanear el QR "
+            "nuevo.\n\n¿Cambiar el código?",
+        ):
+            return
+        self.prefs["token"] = token_nuevo()
+        guardar_preferencias(self.prefs)
+        if self.api:
+            self.api.token = self.prefs["token"]
+            self._refrescar_qr()
 
     def _refrescar_qr(self, *_):
         if not (self.servidor and self.servidor.activo and self._ip()):
@@ -269,20 +325,31 @@ class PanelCelular(QDialog):
             inicio.refrescar()
 
     def done(self, resultado):
-        global _panel
-        self.apagar()
-        _panel = None
+        # Cerrar solo oculta: el servidor sigue y el registro se conserva
+        # para cuando se vuelva a abrir. Se apaga con el botón o al salir.
         super().done(resultado)
-        # Tiene padre (la ventana principal): sin esto quedaría oculto en
-        # memoria cada vez que se cierra.
-        self.deleteLater()
 
 
-def abrir(ventana):
+def _panel_de(ventana):
     global _panel
     if _panel is None:
         _panel = PanelCelular(ventana)
-    _panel.show()
-    _panel.raise_()
-    _panel.activateWindow()
+    return _panel
+
+
+def encender_al_iniciar(ventana):
+    """Al abrir el programa: enciende el lector si quedó marcado, sin mostrar el panel."""
+    if cargar_preferencias()["encender_al_iniciar"]:
+        _panel_de(ventana).encender(silencioso=True)
+
+
+def esta_encendido():
+    return bool(_panel and _panel.servidor and _panel.servidor.activo)
+
+
+def abrir(ventana):
+    panel = _panel_de(ventana)
+    panel.show()
+    panel.raise_()
+    panel.activateWindow()
     return False

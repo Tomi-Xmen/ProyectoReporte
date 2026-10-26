@@ -118,6 +118,8 @@ data class PedidoEscaneo(
     val tipo: String? = null,
     @SerialName("serial_equipo") val serialEquipo: String? = null,
     val forzar: Boolean? = null,
+    /** Con un cargador: el PC solo lo revisa, no escribe (va a la lista y se guarda con el botón). */
+    val borrador: Boolean? = null,
     /** Cargador: que el PC diga qué se leyó y de quién es, sin asignarlo (estado "leido"). */
     @SerialName("solo_leer") val soloLeer: Boolean? = null,
     /** Con [serialEquipo]: pasarlo a ese equipo aunque hoy sea de otro. */
@@ -145,6 +147,31 @@ data class RespuestaEscaneo(
     val valor: String? = null,
     val esperado: String? = null,
     val descartes: List<Descarte> = emptyList(),
+    val lote: String? = null,
+)
+
+/** Un cargador de la lista del celular, emparejado con su equipo. */
+@Serializable
+data class ParCargador(val serial: String, @SerialName("sn_transf") val snTransf: String)
+
+@Serializable
+data class PedidoCargadores(val lote: LoteRef, val pares: List<ParCargador>)
+
+@Serializable
+data class ErrorPar(
+    val serial: String? = null,
+    @SerialName("sn_transf") val snTransf: String? = null,
+    val motivo: String,
+)
+
+/** Respuesta de guardar la lista (ver escaneos.guardar_cargadores): guardado | rechazado | error. */
+@Serializable
+data class RespuestaCargadores(
+    val estado: String,
+    val guardados: List<ParCargador> = emptyList(),
+    val nuevos: Int = 0,
+    @SerialName("sin_cargador") val sinCargador: Int = 0,
+    val errores: List<ErrorPar> = emptyList(),
     val lote: String? = null,
 )
 

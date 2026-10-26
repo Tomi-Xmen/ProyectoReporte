@@ -29,6 +29,9 @@ from .tareas import en_segundo_plano
 from .widgets import Tarjeta, TarjetaAccion, area_scroll, boton, etiqueta
 
 
+_DESC_CELULAR = "Usá el celular como lector de códigos en las OT y guías."
+
+
 class PaginaInicio(QWidget):
     """
     Menú. Los equipos escaneados van SIEMPRE al lote activo: mostrarlo grande
@@ -38,6 +41,7 @@ class PaginaInicio(QWidget):
     def __init__(self, ventana):
         super().__init__()
         self.ventana = ventana
+        self.tarjetas = {}
         self.setObjectName("pagina")
         externo = QVBoxLayout(self)
         externo.setContentsMargins(0, 0, 0, 0)
@@ -123,9 +127,7 @@ class PaginaInicio(QWidget):
                 ("💻", "Cambiar nombre del equipo",
                  "Renombra esta PC a ARR-<serial de BIOS>.", "pizarra",
                  acciones.cambiar_nombre_equipo),
-                ("📱", "Lector celular",
-                 "Usá el celular como lector de códigos en las OT y guías.", "pizarra",
-                 celular.abrir),
+                ("📱", "Lector celular", _DESC_CELULAR, "pizarra", celular.abrir),
             ],
         )
         layout.addStretch(1)
@@ -146,9 +148,9 @@ class PaginaInicio(QWidget):
         grilla.setVerticalSpacing(12)
         for i, (icono, nombre, desc, acento, accion) in enumerate(items):
             fila, col = divmod(i, 2)
-            grilla.addWidget(
-                TarjetaAccion(icono, nombre, desc, acento, self._con(accion)), fila, col
-            )
+            tarjeta = TarjetaAccion(icono, nombre, desc, acento, self._con(accion))
+            self.tarjetas[nombre] = tarjeta
+            grilla.addWidget(tarjeta, fila, col)
         grilla.setColumnStretch(0, 1)
         grilla.setColumnStretch(1, 1)
         layout.addLayout(grilla)
@@ -188,6 +190,13 @@ class PaginaInicio(QWidget):
             self.lbl_otras.setText(f"También abiertas: {resumen}")
         self.lbl_otras.setVisible(bool(otras))
         self.btn_cambiar.setText(f"🔄 Cambiar OT ({len(abiertos)})")
+
+        tarjeta_celular = self.tarjetas.get("Lector celular")
+        if tarjeta_celular is not None:
+            tarjeta_celular.lbl_desc.setText(
+                "🟢 Encendido: el celular puede escanear." if celular.esta_encendido()
+                else _DESC_CELULAR
+            )
 
         legacy = sum(len(v) for v in lotes.pendientes_legacy().values())
         self.btn_legacy.setText(f"⚠️ Migrar {legacy} equipo(s) del formato anterior")
@@ -375,6 +384,13 @@ class VentanaPrincipal(QMainWindow):
         self.paginas.addWidget(self.escaneo)
         self.formulario = None
         self.mostrar_menu()
+        # Después de mostrar la ventana: si quedó marcado, el lector arranca solo.
+        QTimer.singleShot(0, self._encender_lector)
+
+    def _encender_lector(self):
+        celular.encender_al_iniciar(self)
+        if self.paginas.currentWidget() is self.inicio:
+            self.inicio.refrescar()
 
     def _quitar_formulario(self):
         if self.formulario is not None:

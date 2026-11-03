@@ -216,6 +216,11 @@ QPushButton[tamano="grande"] {{ font-size: 15px; padding: 14px 20px; border-radi
 QPushButton[variante="fantasma"] {{ background: transparent; border-color: transparent; color: {c['texto_sec']}; }}
 QPushButton[variante="fantasma"]:hover {{ background: {c['borde']}; }}
 {botones}
+/* Después de los colores: si no, un botón de color deshabilitado se ve igual que activo. */
+QPushButton[variante]:disabled {{
+    background: {c['deshabilitado']}; color: {c['texto_deshabilitado']};
+    border-color: {c['deshabilitado']};
+}}
 QPushButton[rol="tile"] {{
     background: {c['superficie']}; border: 1px solid {c['borde']};
     border-radius: 12px; padding: 0; text-align: left;

@@ -195,3 +195,193 @@ def test_escaneo_en_segundo_plano_abre_formulario(app, lote_con_equipos, monkeyp
     QCoreApplication.processEvents()
     assert ventana.formulario is not None
     assert ventana.paginas.currentWidget() is ventana.formulario
+
+
+# ─────────────────────────────────────────────────────────
+#  Licencias de Office
+# ─────────────────────────────────────────────────────────
+@pytest.fixture
+def base_office(carpeta):
+    from inventario.nucleo import licencias_office
+
+    from test_licencias_office import maestra
+
+    licencias_office.importar(licencias_office.interpretar_filas(maestra())[0])
+    return licencias_office
+
+
+def test_seccion_office_busca_la_caja(app, base_office):
+    from inventario.ui.componentes import SeccionOffice
+    from test_licencias_office import K1
+
+    sec = SeccionOffice(serial="SN-NUEVO")
+    sec.entry_caja.setText("1000000798904")  # el código de barras de la caja
+    sec._buscar_caja()
+    assert sec.chk.isChecked() and sec.entry_key.text() == K1
+    assert sec.entry_key.isReadOnly() and sec.combo_version.currentText() == "2013"
+    assert "disponible" in sec.lbl_caja.text() and sec.activar()
+    assert sec.caja() == "1000000798904"
+
+    sec.entry_caja.setText("NO-EXISTE")
+    sec._buscar_caja()
+    assert "no está en la base" in sec.lbl_caja.text()
+    assert sec.entry_key.text() == "" and not sec.entry_key.isReadOnly()
+
+    # Asignada a otro equipo: avisa y no carga la key ajena.
+    sec.entry_caja.setText("88880811759930")
+    sec._buscar_caja()
+    assert "otro equipo" in sec.lbl_caja.text() and sec.entry_key.text() == ""
+
+
+def test_formulario_asigna_caja_y_activa(app, lote_con_equipos, base_office, sin_modales, monkeypatch):
+    from inventario.nucleo import activacion_office
+    from inventario.ui.ventana_principal import PaginaFormulario, VentanaPrincipal
+    from test_licencias_office import K1
+
+    activadas = []
+    monkeypatch.setattr(
+        activacion_office,
+        "cargar_y_activar",
+        lambda clave, version: activadas.append((clave, version)) or ("activada", "Office activado."),
+    )
+    form = PaginaFormulario(VentanaPrincipal(), datos_equipo("E7"), lote_con_equipos)
+    form.office.entry_caja.setText("88880811420680")
+    form.office._buscar_caja()
+    form._guardar()
+
+    eq = [e for e in lotes.leer_equipos_lote(lote_con_equipos) if e["SERIAL"] == "E7"][0]
+    assert (eq["SN_APP"], eq["OFFICE"], eq["OFFICE_CAJA"]) == (K1, "Office 2013", "88880811420680")
+    assert activadas == [(K1, "2013")]
+    lic = base_office.buscar("88880811420680")
+    assert (lic["serial"], lic["documento"], lic["activacion"]) == ("E7", "OT-553", "activada")
+    assert sin_modales[-1][0] == "info"
+    with open(lotes.ruta_html_lote(lote_con_equipos), encoding="utf-8") as f:
+        assert f"(Key: {K1}) · Caja 88880811420680" in f.read()
+
+
+def test_formulario_no_guarda_si_la_caja_es_de_otro(app, lote_con_equipos, base_office, sin_modales):
+    from inventario.ui.ventana_principal import PaginaFormulario, VentanaPrincipal
+
+    form = PaginaFormulario(VentanaPrincipal(), datos_equipo("E8"), lote_con_equipos)
+    form.office.chk.setChecked(True)
+    form.office.entry_caja.setText("88880811759930")  # asignada a MXL0DEMO01
+    form._guardar()
+    assert sin_modales[-1][0] == "error"
+    assert not [e for e in lotes.leer_equipos_lote(lote_con_equipos) if e["SERIAL"] == "E8"]
+
+
+def test_retiro_libera_la_caja(app, carpeta, base_office, sin_modales):
+    from inventario.ui.ventana_principal import PaginaFormulario, VentanaPrincipal
+
+    retiro = lotes.abrir_lote(lotes.hacer_lote("Retiro", "MUNDO_DULCE", "77"))
+    form = PaginaFormulario(VentanaPrincipal(), datos_equipo("MXL0DEMO01"), retiro)
+    assert form.chk_liberar.isChecked() and form.office.entry_caja is None
+    form._guardar()
+    lic = base_office.buscar("88880811759930")
+    assert lic["estado"] == "disponible"
+    assert "GUIA-77" in base_office.historial("88880811759930")[0]["detalle"]
+    assert "liberada" in sin_modales[-1][1] or sin_modales[-1][0] == "info"
+
+
+def test_dialogo_licencias_importa_y_lista(app, carpeta, sin_modales):
+    from inventario.ui.modulos.licencias import DialogoLicencias
+    from test_licencias_office import maestra
+
+    dlg = DialogoLicencias(None)
+    assert dlg.tabla.rowCount() == 0 and "Todavía no hay" in dlg.lbl_resumen.text()
+    dlg.importar_filas(maestra())
+    assert dlg.tabla.rowCount() == 4
+    assert "Office 2013: 1 disponible(s) de 2" in dlg.lbl_resumen.text()
+    dlg.entry_filtro.setText("mundo")
+    assert dlg.tabla.rowCount() == 1
+
+
+
+def test_dialogo_ot_con_office(app, carpeta, sin_modales):
+    from inventario.nucleo import licencias_office
+    from inventario.ui.dialogos import DialogoNuevoLote
+
+    from test_office_ot import cargar_cajas
+
+    cargar_cajas(("C-1", "1"), ("C-2", "1"))
+    dlg = DialogoNuevoLote(None, "Entrega")
+    assert dlg.combo_office.itemText(1) == "Office 2016 · 2 disponible(s)"
+    dlg.combo_cli.setCurrentText("Acme")
+    dlg.entry_num.setText("553")
+    dlg.combo_office.setCurrentIndex(1)
+    dlg._confirmar()
+    assert lotes.office_en_disco(dlg.lote["ruta"]) == "2016"
+
+    # Al volver a escribir la misma OT, el combo muestra con qué Office va.
+    otra = DialogoNuevoLote(None, "Entrega")
+    otra.combo_cli.setCurrentText("Acme")
+    otra.entry_num.setText("553")
+    assert otra.combo_office.currentData() == "2016"
+    otra.combo_mov.setCurrentText("Retiro")
+    assert not otra.combo_office.isVisibleTo(otra)
+    assert licencias_office.disponibles("2016") == 2
+
+
+def test_formulario_de_ot_con_office_sin_escanear_queda_pendiente(app, carpeta, sin_modales):
+    from inventario.nucleo import licencias_office, office_ot
+    from inventario.ui.ventana_principal import PaginaFormulario, VentanaPrincipal
+
+    from test_office_ot import cargar_cajas
+
+    cargar_cajas(("C-1", "1"))
+    lote = lotes.hacer_lote("Entrega", "ACME", "553")
+    lote["office"] = "2016"
+    lotes.abrir_lote(lote)
+
+    form = PaginaFormulario(VentanaPrincipal(), datos_equipo("E1"), lote)
+    assert form.office.chk.isChecked() and not form.office.combo_version.isEnabled()
+    assert "Asignar Office" in form.office.lbl_caja.text()
+    form._guardar()
+    e1 = [e for e in lotes.leer_equipos_lote(lote) if e["SERIAL"] == "E1"][0]
+    # La app no elige: va con Office 2016, pero la caja se elige después.
+    assert (e1["OFFICE"], e1["SN_APP"]) == ("Office 2016", "PENDIENTE")
+    assert office_ot.necesita_office(e1) and licencias_office.disponibles("2016") == 1
+
+
+def test_pantalla_asignar_office(app, carpeta, sin_modales, monkeypatch):
+    from PySide6.QtWidgets import QApplication
+
+    from inventario.nucleo import licencias_office
+    from inventario.ui.modulos.asignar_office import DialogoAsignarOffice
+
+    from test_office_ot import cargar_cajas
+
+    cargar_cajas(("C-1", "1"), ("C-2", "2"), ("C-3", "2"))
+    lote = lotes.hacer_lote("Entrega", "ACME", "553")
+    lote["office"] = "2016"
+    lote = lotes.abrir_lote(lote)
+    from test_office_ot import guardar
+
+    for serial in ("SN1", "SN2"):
+        guardar(lote, serial, tiene=True)
+
+    dlg = DialogoAsignarOffice(None, lote)
+    assert dlg.tabla_libres.rowCount() == 3 and "Disponibles Office 2016: 3" in dlg.lbl_libres.text()
+
+    # Escanear en la fila 1 y doble clic en una disponible para la fila 2.
+    dlg.entradas[0].setText("C-3")
+    dlg._revisar_todo()
+    assert dlg.tabla.item(0, 4).text() == "✅ Disponible"
+    assert dlg.tabla_libres.rowCount() == 2  # la C-3 ya no figura libre
+    dlg._usar_libre(dlg.tabla_libres.model().index(0, 0))
+    assert dlg.entradas[1].text() == "C-1"
+    # Antes de guardar no hay key para copiar.
+    assert not dlg.tabla.cellWidget(0, 6).isEnabled()
+
+    dlg._guardar()
+    assert "2 equipo(s) actualizado(s)" in dlg.lbl_estado.text()
+    key_sn1 = licencias_office.buscar("C-3")["clave"]
+    assert dlg.tabla.item(0, 5).text() == key_sn1
+    dlg._copiar_key(0)
+    assert QApplication.clipboard().text() == key_sn1
+
+    # Una caja repetida no deja guardar.
+    dlg.entradas[1].setText("C-3")
+    dlg._guardar()
+    assert sin_modales[-1][0] == "error"
+    assert licencias_office.buscar("C-1")["serial"] == "SN2"

@@ -5,9 +5,11 @@ como diálogos encima.
 """
 
 import os
+import sqlite3
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
+    QCheckBox,
     QGridLayout,
     QHBoxLayout,
     QLineEdit,
@@ -18,14 +20,29 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..nucleo import config, lotes, requerimiento
+from ..nucleo import (
+    activacion_office,
+    config,
+    licencias_office,
+    lotes,
+    office_ot,
+    requerimiento,
+)
 from ..nucleo.escaner import get_inventory_fast
 from ..nucleo.lotes import MOV_CFG, carpeta_lote, etiqueta_lote
 from . import acciones, avisos
 from .componentes import COMPONENTES, RevisionComponentes, SeccionOffice
 from .dialogos import nuevo_lote
-from .modulos import celular, etiquetas, mover_ot, panel_clonacion, transformadores
-from .tareas import en_segundo_plano
+from .modulos import (
+    asignar_office,
+    celular,
+    etiquetas,
+    licencias,
+    mover_ot,
+    panel_clonacion,
+    transformadores,
+)
+from .tareas import con_espera, en_segundo_plano
 from .widgets import Banner, Tarjeta, TarjetaAccion, area_scroll, boton, etiqueta
 
 
@@ -98,6 +115,9 @@ class PaginaInicio(QWidget):
                 ("✅", "Cerrar OT",
                  "Regenera el FUSIONADO y marca la OT como finalizada.", "verde",
                  acciones.cerrar_ot),
+                ("🔑", "Asignar Office",
+                 "Elegí qué caja de Office va con cada notebook y copiá su key.", "celeste",
+                 asignar_office.abrir),
             ],
         )
         self._seccion(
@@ -128,6 +148,9 @@ class PaginaInicio(QWidget):
                  "Renombra esta PC a ARR-<serial de BIOS>.", "pizarra",
                  acciones.cambiar_nombre_equipo),
                 ("📱", "Lector celular", _DESC_CELULAR, "pizarra", celular.abrir),
+                ("🔑", "Licencias de Office",
+                 "Cajas de Office: importar, ver disponibles y a qué equipo está cada una.",
+                 "pizarra", licencias.abrir),
             ],
         )
         layout.addStretch(1)
@@ -163,9 +186,9 @@ class PaginaInicio(QWidget):
             self.tarjeta_ot.fijar_estado("ok")
             self.lbl_ot_rotulo.setText("📍 OT ACTIVA")
             self.lbl_ot.setText(etiqueta_lote(lote))
-            self.lbl_ot_detalle.setText(
-                f"{lotes.contar_equipos(lote['ruta'])} equipo(s) escaneado(s)"
-            )
+            detalle = f"{lotes.contar_equipos(lote['ruta'])} equipo(s) escaneado(s)"
+            office = office_ot.texto_estado(lote)
+            self.lbl_ot_detalle.setText(f"{detalle}\n🔑 {office}" if office else detalle)
         else:
             self.tarjeta_ot.fijar_estado("aviso")
             self.lbl_ot_rotulo.setText("⚠️ SIN OT ACTIVA")
@@ -316,6 +339,32 @@ class PaginaFormulario(QWidget):
             self.tarjeta_req.cuerpo.addWidget(self.banner_req)
             cuerpo.addWidget(self.tarjeta_req)
 
+        # Un equipo que vuelve devuelve su licencia: la caja queda libre para
+        # el próximo, como en la planilla (DISPONIBLE con la guía de retiro).
+        self.caja_retiro = None
+        self.chk_liberar = None
+        if lote["mov"] == "Retiro":
+            try:
+                self.caja_retiro = licencias_office.caja_de_equipo(data["serial"])
+            except sqlite3.Error:
+                self.caja_retiro = None
+        if self.caja_retiro:
+            lic = self.caja_retiro
+            tarjeta = Tarjeta(estado="aviso")
+            tarjeta.cuerpo.addWidget(etiqueta("🔑 LICENCIA DE OFFICE", "seccion"))
+            tarjeta.cuerpo.addWidget(
+                etiqueta(
+                    f"Este equipo tiene la caja {lic['caja']} "
+                    f"({lic['producto'] or 'Office ' + lic['version']}).",
+                    "subtitulo",
+                    ajustar=True,
+                )
+            )
+            self.chk_liberar = QCheckBox("Liberar la caja al guardar (vuelve a quedar disponible)")
+            self.chk_liberar.setChecked(True)
+            tarjeta.cuerpo.addWidget(self.chk_liberar)
+            cuerpo.addWidget(tarjeta)
+
         # La revisión de componentes solo aplica a retiros.
         self.revision = None
         if lote["mov"] == "Retiro":
@@ -332,7 +381,13 @@ class PaginaFormulario(QWidget):
         self.entry_obs = QLineEdit()
         extra.cuerpo.addWidget(self.entry_obs)
         extra.cuerpo.addSpacing(4)
-        self.office = SeccionOffice()
+        # El código de caja es para lo que sale: en un retiro se libera arriba.
+        if lote["mov"] == "Entrega":
+            self.office = SeccionOffice(
+                serial=data["serial"], version_ot=office_ot.version_de(lote)
+            )
+        else:
+            self.office = SeccionOffice()
         extra.cuerpo.addWidget(self.office)
         cuerpo.addWidget(extra)
         cuerpo.addStretch(1)
@@ -394,6 +449,17 @@ class PaginaFormulario(QWidget):
         ):
             return
 
+        # La caja se asigna antes de escribir el equipo: si otro se la llevó
+        # mientras tanto, no queda un registro con una key que no es suya.
+        lic = None
+        caja = self.office.caja()
+        if caja:
+            lic = self._asignar_caja(caja)
+            if lic is None:
+                return
+            office_key = lic["clave"]
+            version_office = lic["version"] or version_office
+
         total = lotes.guardar_equipo_general(
             lote,
             data,
@@ -402,14 +468,89 @@ class PaginaFormulario(QWidget):
             office_key,
             version_office,
             detalle,
+            caja_office=lic["caja"] if lic else "",
         )
-        avisos.info(
-            self,
-            "✅ Guardado",
-            f"Equipo agregado a {etiqueta_lote(lote)}.\n\n"
+        lineas = [
+            f"Equipo agregado a {etiqueta_lote(lote)}.",
             f"La OT lleva {total} equipo(s) y su JSON FUSIONADO ya está actualizado.",
-        )
+        ]
+        if lic:
+            lineas.append(f"🔑 Caja {lic['caja']} asignada a este equipo.")
+            if self.office.activar():
+                lineas.append(self._activar_office(lic))
+        if self.chk_liberar is not None and self.chk_liberar.isChecked():
+            lineas.append(self._liberar_caja_retiro())
+        avisos.info(self, "✅ Guardado", "\n\n".join(lineas))
         self.ventana.mostrar_menu()
+
+    def _asignar_caja(self, caja):
+        """Licencia asignada a este equipo, o None si no se pudo (ya avisado)."""
+        data, lote = self.data, self.lote
+        datos = {
+            "modelo": data["model"],
+            "cliente": lote["cliente"],
+            "documento": carpeta_lote(lote["mov"], lote["numero"]),
+        }
+        reemplazar = False
+        while True:
+            try:
+                return licencias_office.asignar(
+                    caja, data["serial"], reemplazar=reemplazar, **datos
+                )
+            except licencias_office.ErrorLicencia as e:
+                if e.codigo != "otra_caja":
+                    avisos.error(self, "No se puede usar esa caja", e.mensaje)
+                    return None
+                # El equipo ya tenía otra caja: cambiarla es válido, pero lo decide alguien.
+                if not avisos.confirmar(
+                    self,
+                    "El equipo ya tiene otra caja",
+                    f"{e.mensaje}\n\n¿Liberar la caja {e.licencia['caja']} y asignarle esta?",
+                ):
+                    return None
+                reemplazar = True
+            except sqlite3.Error as e:
+                avisos.error(
+                    self, "Base de licencias", f"No se pudo usar la base de licencias:\n{e}"
+                )
+                return None
+
+    def _activar_office(self, lic):
+        """Carga la key en este equipo y activa. Devuelve la línea para el resumen."""
+        try:
+            estado, detalle = con_espera(
+                self,
+                "Office",
+                "Cargando la key y activando Office…",
+                activacion_office.cargar_y_activar,
+                lic["clave"],
+                lic["version"],
+                detalle="Si Windows pide permiso de administrador, aceptalo.",
+            )
+        except activacion_office.ErrorActivacion as e:
+            estado, detalle = "error", str(e)
+        try:
+            licencias_office.registrar_activacion(lic["caja"], estado, detalle)
+        except sqlite3.Error:
+            pass
+        if estado == licencias_office.ACTIVADA:
+            return f"⚡ {detalle}"
+        avisos.aviso(
+            self,
+            "Office sin activar",
+            f"{detalle}\n\nEl equipo y la caja quedaron guardados igual: "
+            "se puede activar a mano más tarde.",
+        )
+        return f"⚠️ {detalle}"
+
+    def _liberar_caja_retiro(self):
+        lic, lote = self.caja_retiro, self.lote
+        documento = carpeta_lote(lote["mov"], lote["numero"])
+        try:
+            licencias_office.liberar(lic["caja"], f"retiro {lote['cliente']} {documento}")
+        except (licencias_office.ErrorLicencia, sqlite3.Error) as e:
+            return f"⚠️ No se pudo liberar la caja {lic['caja']}: {e}"
+        return f"🔑 Caja {lic['caja']} liberada: vuelve a estar disponible."
 
 
 class VentanaPrincipal(QMainWindow):

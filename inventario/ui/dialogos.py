@@ -3,6 +3,7 @@ Diálogos de OT: crear (o reabrir) una OT y elegir una de las abiertas.
 """
 
 import os
+import sqlite3
 from datetime import datetime
 
 from PySide6.QtCore import Qt
@@ -10,6 +11,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFormLayout,
+    QHBoxLayout,
     QLineEdit,
     QSpinBox,
     QVBoxLayout,
@@ -28,10 +30,13 @@ from ..nucleo.lotes import (
     listar_lotes_abiertos,
     normalizar_cliente,
     normalizar_numero,
+    office_en_disco,
     reabrir_lote,
+    ruta_lote,
 )
-from ..nucleo import requerimiento
+from ..nucleo import licencias_office, requerimiento
 from . import avisos
+from .modulos.asignar_office import ver_disponibles
 from .widgets import agregar_fila, boton, etiqueta, fila_botones, tabla
 
 
@@ -98,9 +103,6 @@ class SeccionRequerimiento(QWidget):
         self.combo_tipo = _combo(["Cualquiera", *requerimiento.TIPOS_DISCO])
         form.addRow(etiqueta("Tipo de disco:", "campo"), self.combo_tipo)
 
-        self.combo_office = _combo(["Cualquiera", "Sí", "No"])
-        form.addRow(etiqueta("Office:", "campo"), self.combo_office)
-
         self.entry_nota = QLineEdit()
         self.entry_nota.setPlaceholderText("Ej: con cargador original, Windows 11 Pro")
         form.addRow(etiqueta("Nota:", "campo"), self.entry_nota)
@@ -115,7 +117,6 @@ class SeccionRequerimiento(QWidget):
                 "ram_gb": self.combo_ram.currentText(),
                 "disco_gb": self.combo_disco.currentText(),
                 "disco_tipo": self.combo_tipo.currentText(),
-                "office": self.combo_office.currentText(),
                 "nota": self.entry_nota.text(),
             }
         )
@@ -170,6 +171,35 @@ class DialogoNuevoLote(QDialog):
         self.entry_sec = QLineEdit()
         self.entry_sec.setPlaceholderText("Opcional, se puede completar después")
         form.addRow(self.lbl_sec, self.entry_sec)
+
+        # Con qué Office van los equipos. Qué caja va con cada uno se elige
+        # después, en "Asignar Office" (office_ot).
+        self.combo_office = QComboBox()
+        self.combo_office.addItem("Sin Office", "")
+        try:
+            existencias = licencias_office.resumen()
+        except sqlite3.Error:
+            existencias = {}
+        for version, n in sorted(existencias.items()):
+            if version:
+                self.combo_office.addItem(
+                    f"Office {version} · {n[licencias_office.DISPONIBLE]} disponible(s)", version
+                )
+        if self.combo_office.count() == 1:
+            self.combo_office.setToolTip("No hay licencias cargadas: 🔑 Licencias de Office")
+        self.btn_cajas = boton("📦 Ver cajas", self._ver_cajas)
+        self.combo_office.currentIndexChanged.connect(
+            lambda *_: self.btn_cajas.setEnabled(bool(self.combo_office.currentData()))
+        )
+        self.btn_cajas.setEnabled(False)
+        self.fila_office = QWidget()
+        caja_office = QHBoxLayout(self.fila_office)
+        caja_office.setContentsMargins(0, 0, 0, 0)
+        caja_office.addWidget(self.combo_office, 1)
+        caja_office.addWidget(self.btn_cajas)
+        form.addRow(etiqueta("Office:", "campo"), self.fila_office)
+        self._form = form
+        self._ruta_prellenada = None
         layout.addLayout(form)
 
         self.requerimiento = SeccionRequerimiento()
@@ -201,6 +231,7 @@ class DialogoNuevoLote(QDialog):
         # como esté, no hay specs comprometidas que comparar.
         if self.requerimiento.isVisibleTo(self) != es_entrega:
             self.requerimiento.setVisible(es_entrega)
+            self._form.setRowVisible(self.fila_office, es_entrega)
             self.adjustSize()
         numero = normalizar_numero(self.entry_num.text(), mov)
         texto_cli = self.combo_cli.currentText()
@@ -209,8 +240,29 @@ class DialogoNuevoLote(QDialog):
             self.lbl_prev.setText(
                 f"📁 {MOV_CFG[mov]['grupo']} / {cliente} / {carpeta_lote(mov, numero)}"
             )
+            self._prellenar_office(ruta_lote(mov, cliente, numero))
         else:
             self.lbl_prev.setText("")
+
+    def _ver_cajas(self):
+        version = self.combo_office.currentData()
+        if version:
+            ver_disponibles(self, version)
+
+    def _prellenar_office(self, ruta):
+        """
+        Al escribir una OT que ya existe, el combo muestra con qué Office va:
+        reabrirla sin mirar no tiene que dejarla sin Office.
+        """
+        if ruta == self._ruta_prellenada or not os.path.isdir(ruta):
+            return
+        self._ruta_prellenada = ruta
+        version = office_en_disco(ruta)
+        i = self.combo_office.findData(version)
+        if i < 0 and version:
+            self.combo_office.addItem(f"Office {version}", version)
+            i = self.combo_office.count() - 1
+        self.combo_office.setCurrentIndex(max(i, 0))
 
     def _confirmar(self):
         if not self.combo_cli.currentText().strip():
@@ -234,6 +286,7 @@ class DialogoNuevoLote(QDialog):
         )
         if mov == "Entrega":
             lote["requerimiento"] = self.requerimiento.valores()
+            lote["office"] = self.combo_office.currentData()
 
         # Reabrir una OT ya cerrada es posible, pero nunca en silencio.
         if esta_cerrado(lote["ruta"]):

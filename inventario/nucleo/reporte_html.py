@@ -725,6 +725,11 @@ def reconstruir_entry_desde_json(jdata, diferencias_req=None):
         key_part = (
             f" (Key: {sn_app})" if sn_app and sn_app not in ("PENDIENTE", None) else ""
         )
+        # La caja va DESPUÉS del paréntesis: filasValida toma la versión del
+        # primer 'Office NNNN' y la key hasta el ')'.
+        caja = jdata.get("OFFICE_CAJA")
+        if caja:
+            key_part += f" · Caja {html.escape(str(caja))}"
         office_html = (
             f'<tr class="office-row"><th>🔑 Office Instalado</th>'
             f"<td><b>{office_str}</b>{key_part}</td></tr>"

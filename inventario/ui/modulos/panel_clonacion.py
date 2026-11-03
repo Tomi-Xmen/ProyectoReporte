@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from ...nucleo import fog, remoto, sincronizacion
+from ...nucleo import fog, office_ot, remoto, sincronizacion
 from ...nucleo.lotes import cargar_lote_activo, esta_cerrado, etiqueta_lote, regenerar_lote
 from .. import avisos, reporte_vivo, tema
 from ..tareas import con_espera, en_segundo_plano
@@ -229,7 +229,9 @@ class PanelClonacion(QDialog):
             )
         else:
             nuevos = f" · {escritos} equipo(s) nuevo(s) o actualizado(s)" if escritos else ""
-            self.lbl_auto.setText(f"Última vuelta {res['hora']}{nuevos}")
+            office = office_ot.texto_estado(local)
+            office = f" · 🔑 {office}" if office else ""
+            self.lbl_auto.setText(f"Última vuelta {res['hora']}{nuevos}{office}")
 
     def _aplicar_traido(self, res):
         """

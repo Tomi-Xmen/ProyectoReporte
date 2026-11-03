@@ -17,6 +17,12 @@ Reportes_Guardados/
 !android/app/src/test/resources/contrato/*.json
 *.html
 
+# Licencias de Office: la planilla y la base tienen las keys, no van al repo.
+*.xls
+*.xlsx
+licencias_office.db
+licencias_office.db-journal
+
 # Archivos temporales del sistema
 .DS_Store
 Thumbs.db

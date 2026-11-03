@@ -16,6 +16,7 @@ import re
 import shutil
 from datetime import datetime
 
+from . import licencias_office
 from .escaneos import TIPO_EQUIPO_DEFAULT, normalizar_lectura, tipo_equipo
 from .lotes import (
     MOV_CFG,
@@ -189,6 +190,12 @@ def quitar_equipo(lote, serial):
     # volver a bajar del servidor.
     registrar_quitado(lote["ruta"], nombre, ruta)
     shutil.move(ruta, os.path.join(papelera, f"{nombre}.quitado-{sello}"))
+    # Su licencia de Office queda libre para otro equipo.
+    if jdata.get("OFFICE_CAJA"):
+        try:
+            licencias_office.liberar(jdata["OFFICE_CAJA"], f"quitado de {etiqueta_lote(lote)}")
+        except Exception:
+            pass
     marcar_pendiente_envio(lote)
     return {
         "estado": "quitado",

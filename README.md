@@ -39,7 +39,6 @@ inventario/
 tests/                 pruebas (pytest)
 herramientas/          simular_celular.py: prueba el lector sin la app
 android/               app Android del lector celular (ver android/README.md)
-REPORTE3_tk.py         versión anterior en Tkinter (respaldo temporal)
 ```
 
 La regla de la estructura: **`nucleo/` nunca importa nada de `ui/`**. Toda

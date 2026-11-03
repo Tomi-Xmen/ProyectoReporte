@@ -1,0 +1,9 @@
+{
+    "host": "192.168.1.10",
+    "puerto": 22,
+    "usuario": "reportes",
+    "clave": "id_clonado",
+    "passphrase": "",
+    "destino": "/srv/reportes/Reportes_Guardados",
+    "timeout": 20
+}

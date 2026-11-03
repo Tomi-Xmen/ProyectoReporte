@@ -47,7 +47,7 @@ def base(carpeta):
 def test_normalizaciones():
     assert L.normalizar_clave("aaaaa bbbbb ccccc ddddd 11111") == K1
     assert L.normalizar_clave("AAAAA-BBBBB") == ""
-    assert L.normalizar_codigo(" 1.962630798904E+12 ") == "1000000798904"
+    assert L.normalizar_codigo(" 1.000000798904E+12 ") == "1000000798904"
     assert L.normalizar_codigo("123.0") == "123"
     assert L.normalizar_version("Office Home and Business 2021") == "2021"
     assert L.normalizar_version("Office 2016 Hogar y Empresas") == "2016"

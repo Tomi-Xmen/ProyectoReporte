@@ -42,6 +42,7 @@ fi
 faltan=""
 [ -d "${postdownpath}/REPORTE3" ]        || faltan="$faltan REPORTE3/"
 [ -f "${postdownpath}/id_clonado" ]      || faltan="$faltan id_clonado"
+[ -f "${postdownpath}/servidor.json" ]   || faltan="$faltan servidor.json"
 [ -f "${postdownpath}/fog_postscript.bat" ] || faltan="$faltan fog_postscript.bat"
 if [ -n "$faltan" ]; then
     echo "ERROR: falta en ${postdownpath}:$faltan"
@@ -49,13 +50,14 @@ if [ -n "$faltan" ]; then
     exit 2
 fi
 
-# 4. Copiar el programa completo, la clave y el lanzador.
+# 4. Copiar el programa completo, la clave, los datos del servidor y el lanzador.
 DEST="/ntfs/${DEST_REL}"
 STARTUP="/ntfs/${STARTUP_REL}"
 mkdir -p "$DEST" "$STARTUP"
 
 cp -r "${postdownpath}/REPORTE3/." "$DEST"/
 cp "${postdownpath}/id_clonado" "$DEST"/
+cp "${postdownpath}/servidor.json" "$DEST"/
 cp "${postdownpath}/fog_postscript.bat" "$STARTUP"/
 
 sync

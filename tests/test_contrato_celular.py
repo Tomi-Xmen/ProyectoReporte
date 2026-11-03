@@ -172,11 +172,16 @@ def _generar():
 
 
 def _forma(valor):
-    """Estructura sin valores: claves de los objetos y forma del primer elemento de las listas."""
+    """
+    Estructura sin valores: claves de los objetos y las formas distintas que
+    aparecen en cada lista, sin importar su orden. El orden de los equipos que
+    se escanean en el mismo segundo depende del sistema de archivos; mirar
+    solo el primero hacía que el test pasara en un disco y fallara en otro.
+    """
     if isinstance(valor, dict):
         return {k: _forma(v) for k, v in sorted(valor.items())}
     if isinstance(valor, list):
-        return [_forma(valor[0])] if valor else []
+        return sorted({json.dumps(_forma(v), sort_keys=True) for v in valor})
     return type(valor).__name__
 
 

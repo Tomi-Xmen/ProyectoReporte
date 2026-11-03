@@ -138,6 +138,12 @@ def abrir_conexion_scp():
             "Falta la librería 'paramiko'/'scp'.\n\n"
             "Instalar con:  pip install paramiko scp"
         )
+    if not config.SERVIDOR_CONFIGURADO:
+        raise RuntimeError(
+            "Falta configurar el servidor.\n\n"
+            f"Copiá servidor.ejemplo.json como {config.ARCHIVO_SERVIDOR} junto al "
+            "programa y completá host, usuario y destino."
+        )
 
     ruta_clave = resolver_clave_ssh()
     clave = None

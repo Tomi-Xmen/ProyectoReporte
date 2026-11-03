@@ -10,6 +10,29 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from inventario.nucleo import lotes  # noqa: E402  (config hace chdir al importarse)
 
 
+def pytest_sessionfinish(session, exitstatus):
+    """
+    Cierra Qt en orden antes de que Python termine. Si no, las ventanas que
+    dejaron los tests se destruyen después que la aplicación, en el orden que
+    elija el recolector, y en algunos entornos (el CI) el proceso termina con
+    un "Segmentation fault" aunque todos los tests hayan pasado.
+    """
+    try:
+        from PySide6.QtCore import QCoreApplication, QEvent, QThreadPool
+        from PySide6.QtWidgets import QApplication
+    except ImportError:
+        return
+    QThreadPool.globalInstance().waitForDone(10_000)
+    app = QApplication.instance()
+    if app is None:
+        return
+    for ventana in app.topLevelWidgets():
+        ventana.close()
+        ventana.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+
+
 @pytest.fixture
 def carpeta(tmp_path, monkeypatch):
     """Directorio de trabajo vacío: Reportes_Guardados se arma adentro."""

@@ -9,9 +9,6 @@ código vive en el paquete 'inventario':
                        reconstrucción, SCP, FOG y modo clonación.
   inventario/ui/       interfaz de escritorio en PySide6 (Qt).
   inventario/app.py    elige el modo según los argumentos (--clonacion, ...).
-
-REPORTE3_tk.py es la versión anterior en Tkinter, que se conserva solo como
-respaldo mientras se valida la nueva.
 """
 
 import sys

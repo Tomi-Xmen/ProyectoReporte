@@ -8,6 +8,10 @@ venv/
 .venv/
 env/
 
+# Compilación del .exe (PyInstaller): se rearma con REPORTE3.spec.
+build/
+dist/
+
 # Archivos y carpetas generadas por el script de Arrienda
 Reportes_Guardados/
 *.docx

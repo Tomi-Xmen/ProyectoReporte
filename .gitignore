@@ -8,6 +8,10 @@ venv/
 .venv/
 env/
 
+# Compilación del .exe (PyInstaller): se rearma con REPORTE3.spec.
+build/
+dist/
+
 # Archivos y carpetas generadas por el script de Arrienda
 Reportes_Guardados/
 *.docx
@@ -16,6 +20,12 @@ Reportes_Guardados/
 # Contrato PC ↔ app Android: es fuente, no un reporte generado.
 !android/app/src/test/resources/contrato/*.json
 *.html
+
+# Licencias de Office: la planilla y la base tienen las keys, no van al repo.
+*.xls
+*.xlsx
+licencias_office.db
+licencias_office.db-journal
 
 # Archivos temporales del sistema
 .DS_Store

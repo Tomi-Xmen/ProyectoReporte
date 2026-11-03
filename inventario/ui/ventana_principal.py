@@ -125,7 +125,8 @@ class PaginaInicio(QWidget):
             "Archivo y respaldo",
             [
                 ("🚀", "Enviar OT al servidor",
-                 f"Sube lo pendiente por SCP a {config.SCP_HOST}.", "naranja",
+                 f"Sube lo pendiente por SCP a {config.SCP_HOST or 'el servidor (sin configurar)'}.",
+                 "naranja",
                  acciones.enviar_al_servidor),
                 ("🔧", "Reconstruir / reparar desde JSONs",
                  "Rearma HTML y FUSIONADO de una OT, un cliente o un grupo.", "morado",

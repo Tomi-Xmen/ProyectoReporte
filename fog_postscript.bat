@@ -11,6 +11,7 @@ REM  Lo que fog_postscript.sh deja en CARPETA:
 REM
 REM      REPORTE3.exe + _internal\   la carpeta COMPLETA del build onedir
 REM      id_clonado                  la clave privada SSH  <-- SIN esto no envia
+REM      servidor.json               a que servidor enviar (host, usuario, destino)
 REM
 REM  La clave DEBE viajar junto al .exe: el equipo clonado tiene otro perfil de
 REM  usuario y la ruta C:\Users\Tomas\.ssh no existe ahi. El programa la busca

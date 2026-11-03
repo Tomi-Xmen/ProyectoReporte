@@ -2,10 +2,12 @@
 Configuración global: carpeta base del programa, servidor SCP y librerías
 opcionales.
 
-Cambiar cualquiera de estas constantes exige recompilar el .exe: son la única
-fuente de verdad de la conexión.
+Los datos del servidor salen de 'servidor.json', junto al programa (ver
+servidor.ejemplo.json). No van en el código: son de cada instalación, y el
+archivo viaja con el .exe a los equipos clonados igual que la clave SSH.
 """
 
+import json
 import os
 import sys
 
@@ -50,18 +52,32 @@ except ImportError:
 # NO se sube: es un derivado y se rearma allá con "RECONSTRUIR DESDE JSONs",
 # que produce un reporte idéntico y 100% funcional.
 # ============================================================================
-SCP_HOST = "192.168.10.15"         # IP o nombre del servidor SSH
-SCP_PUERTO = 22                    # puerto SSH
-SCP_USUARIO = "Reporte"            # usuario SSH
-# Clave privada SSH. Si queda vacía se intenta con las claves del agente o de
-# ~/.ssh del usuario de Windows.
-SCP_CLAVE = "/home/tomi/ProyectoReporte/id_clonado"
-SCP_CLAVE_PASSPHRASE = ""          # vacío si la clave no tiene passphrase
+ARCHIVO_SERVIDOR = "servidor.json"
+
+
+def _leer_servidor():
+    """Contenido de servidor.json, o {} si no está o no se puede leer."""
+    try:
+        with open(os.path.join(ruta_base_proyecto, ARCHIVO_SERVIDOR), encoding="utf-8") as f:
+            datos = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return datos if isinstance(datos, dict) else {}
+
+
+_servidor = _leer_servidor()
+SCP_HOST = str(_servidor.get("host") or "")          # IP o nombre del servidor SSH
+SCP_PUERTO = int(_servidor.get("puerto") or 22)     # puerto SSH
+SCP_USUARIO = str(_servidor.get("usuario") or "")   # usuario SSH
+# Clave privada SSH: el nombre del archivo junto al programa (o una ruta). Si
+# no está se prueba con ~/.ssh del usuario (remoto.candidatas_clave_ssh).
+SCP_CLAVE = str(_servidor.get("clave") or "")
+SCP_CLAVE_PASSPHRASE = str(_servidor.get("passphrase") or "")  # vacío si no tiene
 # Carpeta base REMOTA (ruta estilo Linux). Debajo se replica el árbol completo
 # <GRUPO>/<CLIENTE>/<OT-553>, igual que en local: así lo que se baja del
 # servidor se reconstruye como OT canónica y no como "carpeta suelta".
-SCP_DESTINO = (
-    "/srv/dev-disk-by-uuid-50e34ae9-5743-420d-b093-89dfd29299cd"
-    "/DocumentosLab/Reportes_Guardados"
-)
-SCP_TIMEOUT = 20                   # segundos para conectar antes de fallar
+SCP_DESTINO = str(_servidor.get("destino") or "")
+SCP_TIMEOUT = int(_servidor.get("timeout") or 20)   # segundos para conectar
+
+# Sin host, usuario y carpeta no hay a dónde enviar: remoto lo avisa al conectar.
+SERVIDOR_CONFIGURADO = bool(SCP_HOST and SCP_USUARIO and SCP_DESTINO)

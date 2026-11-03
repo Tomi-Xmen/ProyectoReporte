@@ -19,6 +19,8 @@ Reportes_Guardados/
 *.json
 # Contrato PC ↔ app Android: es fuente, no un reporte generado.
 !android/app/src/test/resources/contrato/*.json
+# Ejemplo de configuración del servidor (servidor.json es de cada instalación).
+!servidor.ejemplo.json
 *.html
 
 # Licencias de Office: la planilla y la base tienen las keys, no van al repo.
@@ -41,6 +43,12 @@ id_ecdsa
 clave_scp
 *.pem
 *.ppk
-!*.pub
+# La clave pública del servidor tampoco hace falta en el repo.
+id_clonado.pub
 # Pruebas
 .pytest_cache/
+
+# Configuración personal del editor y de herramientas.
+.vscode/
+.claude/
+.idea/

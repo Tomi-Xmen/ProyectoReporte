@@ -292,7 +292,7 @@ def test_dialogo_licencias_importa_y_lista(app, carpeta, sin_modales):
     dlg.importar_filas(maestra())
     assert dlg.tabla.rowCount() == 4
     assert "Office 2013: 1 disponible(s) de 2" in dlg.lbl_resumen.text()
-    dlg.entry_filtro.setText("mundo")
+    dlg.entry_filtro.setText("demo")
     assert dlg.tabla.rowCount() == 1
 
 

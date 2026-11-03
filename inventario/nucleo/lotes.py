@@ -152,9 +152,10 @@ def numeros_lote(lote):
 def guardar_meta_lote(lote):
     """
     Deja en la carpeta del lote lo que la ruta no puede codificar: el número
-    secundario y, en una entrega, el requerimiento de specs. Casi todos los
-    que llaman traen un lote sin 'requerimiento' (sale del puntero al lote
-    activo o de la ruta), así que se conserva el que ya tenga la carpeta.
+    secundario y, en una entrega, el requerimiento de specs y con qué Office
+    va. Casi todos los que llaman traen un lote sin esos datos (sale del
+    puntero al lote activo o de la ruta), así que se conservan los que ya
+    tenga la carpeta.
     """
     try:
         os.makedirs(lote["ruta"], exist_ok=True)
@@ -162,6 +163,8 @@ def guardar_meta_lote(lote):
         meta["numero_sec"] = lote.get("numero_sec", "")
         if "requerimiento" in lote:
             meta["requerimiento"] = requerimiento.normalizar(lote["requerimiento"])
+        if lote.get("office") is not None:
+            meta["office"] = lote["office"]
         ruta = os.path.join(lote["ruta"], ARCHIVO_META_LOTE)
         with open(ruta, "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False)
@@ -186,6 +189,11 @@ def numero_sec_en_disco(ruta):
 def requerimiento_en_disco(ruta):
     """Requerimiento de specs del lote, normalizado. {} si no tiene."""
     return requerimiento.normalizar(leer_meta_lote(ruta).get("requerimiento"))
+
+
+def office_en_disco(ruta):
+    """Versión de Office con que va la OT ('2016'…), o '' si va sin Office."""
+    return str(leer_meta_lote(ruta).get("office") or "")
 
 
 def etiqueta_lote(lote):
@@ -609,12 +617,15 @@ def buscar_serial_en_abiertos(serial, excluir_ruta=None):
 
 
 def guardar_equipo_general(
-    lote, data, obs, tiene_office, office_key, version_office, detalle_componentes
+    lote, data, obs, tiene_office, office_key, version_office, detalle_componentes,
+    caja_office="",
 ):
     """
     Registra un equipo en el lote (OT/guía) activo: escribe su JSON individual
     y regenera el HTML y el FUSIONADO de la OT. El movimiento y el número de
-    documento los aporta el lote, no el equipo. Devuelve el total del lote.
+    documento los aporta el lote, no el equipo. 'caja_office' es el código de
+    la caja de licencias_office de donde salió la key, si salió de una.
+    Devuelve el total del lote.
     """
     tiene_fallas = any(c["estado"] != "OK" for c in detalle_componentes)
     num_ot, num_guia = numeros_lote(lote)
@@ -650,6 +661,8 @@ def guardar_equipo_general(
         # Timestamp ordenable: el HTML se rearma con el más reciente arriba.
         "ESCANEADO": clave_orden(previo) or ahora,
     }
+    if tiene_office and caja_office:
+        registro["OFFICE_CAJA"] = caja_office
     return guardar_registro_en_lote(lote, registro)
 
 

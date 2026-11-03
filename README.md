@@ -15,6 +15,9 @@ inventario/
     escaner.py         script de PowerShell y lectura del hardware
     lotes.py           OT/guías en disco: guardar, cerrar, mover, backups
     requerimiento.py   specs pedidas en una entrega y aviso si un equipo difiere
+    licencias_office.py  base de cajas de Office: importar, asignar, liberar
+    activacion_office.py carga la key en el equipo y activa (OSPP, 2013/2016)
+    office_ot.py       OT con Office: qué caja va con cada notebook de la OT
     escaneos.py        lector celular: elegir el serial y aplicarlo al lote
     gestion_lote.py    lector celular: cargadores, mover/quitar, guía/OT, cierre
     api_celular.py     lector celular: qué responde el PC a cada pedido
@@ -35,7 +38,7 @@ inventario/
     servidor_celular.py  HTTP del lector celular (QtNetwork)
     reporte_vivo.py      HTTP del reporte en vivo (solo 127.0.0.1)
     modulos/           mover OT, transformadores, etiquetas, panel de clonación,
-                       lector celular
+                       lector celular, licencias de Office, asignar Office
 tests/                 pruebas (pytest)
 herramientas/          simular_celular.py: prueba el lector sin la app
 android/               app Android del lector celular (ver android/README.md)
@@ -91,6 +94,35 @@ llega). Es el mismo HTML de la carpeta de la OT, servido por el programa en
 `127.0.0.1` (nadie más de la red lo ve) mientras el programa esté abierto.
 Quitar un equipo con el botón del reporte es solo visual y se pierde en la
 próxima recarga, como al reabrir el archivo.
+
+## Licencias de Office
+
+Menú → **🔑 Licencias de Office**. La base (`licencias_office.db`, junto al
+programa) es la fuente de verdad de qué caja tiene cada equipo. No va al repo:
+tiene las keys.
+
+- **Importar**: la planilla "OFFICE ARRIENDA" guardada como `.xlsx` (el `.xls`
+  viejo no se lee) o `.csv`. Entra con su estado (disponible, asignada,
+  deshabilitada) y lo que recordaba de cada caja queda en su historial.
+  Importar de nuevo no pisa nada: solo agrega cajas nuevas.
+- **Entregar**: en el formulario del equipo se escanea la caja (sirve el
+  CODIGO CAJA o el COD. BARRA). La key y la versión salen de la base y la caja
+  se asigna al guardar; si ya es de otro equipo, no se guarda. En 2013/2016 se
+  carga la key y se activa Office en el equipo (pide permiso de administrador
+  una vez). Las 2021/2024 se asignan pero se activan aparte, con su cuenta.
+- **OT con Office**: al crear la OT de entrega se elige "Office: 2016" (o la
+  versión que sea); "📦 Ver cajas" muestra las disponibles y en qué caja de
+  almacenamiento están. La app no asigna sola: en Menú → **🔑 Asignar
+  Office** se elige qué caja va con cada notebook, escaneándola en su fila
+  (Enter salta a la siguiente), pegando la columna desde Excel o con doble
+  clic en una disponible. Guardar asigna todo junto o nada (se pueden
+  intercambiar cajas entre equipos de la OT), escribe la key en cada JSON y
+  regenera el HTML y el FUSIONADO. Después cada fila muestra su key con un
+  botón **Copiar**, para pegarla en Office al instalarlo y activarlo. El menú
+  muestra cuántos notebooks tienen caja y cuántos faltan.
+- **Retirar**: si el equipo tenía una caja, el formulario ofrece liberarla.
+  Quitar un equipo de la OT también la libera.
+- **Exportar** deja toda la base en un CSV para Excel, con las keys completas.
 
 ## Clonación: traer automático
 

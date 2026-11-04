@@ -30,11 +30,11 @@ from ...nucleo.lotes import (
     regenerar_lote,
 )
 from .. import acciones, avisos, reporte_vivo, tema
-from ..tareas import con_espera, en_segundo_plano
+from ..sincronizador import Sincronizador
+from ..tareas import con_espera
 from ..widgets import Banner, agregar_fila, boton, etiqueta, fila_botones, tabla
 
 # Cada cuánto se trae lo nuevo del servidor mientras el panel está abierto.
-_INTERVALO_TRAER_MS = 15_000
 
 
 class PanelClonacion(QDialog):
@@ -83,24 +83,24 @@ class PanelClonacion(QDialog):
             )
         )
 
-        # Traer automático: lo que mandan los equipos clonados entra solo a la
-        # OT local y su HTML se regenera, sin apretar "Traer y reconstruir".
+        # Traer automático: lo hace el sincronizador de la ventana principal,
+        # esté o no abierto este panel; acá solo se muestra y se puede pausar.
+        # Sin ventana principal (un panel suelto) usa uno propio.
+        self.sinc = getattr(padre, "sincronizador", None)
+        if self.sinc is None:
+            self.sinc = Sincronizador(self)
         fila_auto = QHBoxLayout()
-        self.chk_auto = QCheckBox("🔄 Traer automático (cada 15 s)")
-        self.chk_auto.setChecked(True)
-        self.chk_auto.toggled.connect(self._al_cambiar_auto)
+        self.chk_auto = QCheckBox("🔄 Traer automático (cada 15 s, también con el panel cerrado)")
+        self.chk_auto.setChecked(not self.sinc.pausado)
+        self.chk_auto.toggled.connect(lambda activo: self.sinc.pausar(not activo))
         self.lbl_auto = etiqueta("", "ayuda")
         fila_auto.addWidget(self.chk_auto)
         fila_auto.addWidget(self.lbl_auto, 1)
         layout.insertLayout(2, fila_auto)
 
-        self._trayendo = False
         self._cerrado = False
-        self._timer = QTimer(self)
-        self._timer.setInterval(_INTERVALO_TRAER_MS)
-        self._timer.timeout.connect(self._traer_auto)
-        self._timer.start()
-        QTimer.singleShot(0, self._traer_auto)
+        self.sinc.cambio.connect(self._al_cambio)
+        QTimer.singleShot(0, self, self.sinc.traer_ahora)
 
     # --- servidor ---------------------------------------------------------
     def _remoto(self, texto, tarea, titulo_error):
@@ -195,76 +195,31 @@ class PanelClonacion(QDialog):
             if fondo:
                 item.setBackground(QColor(tema.color(fondo)))
 
-    # --- traer automático -------------------------------------------------
-    def _al_cambiar_auto(self, activo):
-        if activo:
-            self._timer.start()
-            self._traer_auto()
-        else:
-            self._timer.stop()
-            self.lbl_auto.setText("Pausado: usá \"Traer y reconstruir\" para traer a mano.")
-
-    def _traer_auto(self):
-        """Una vuelta en segundo plano: sin modal, la ventana sigue usable."""
-        if self._trayendo or self._cerrado or not self.chk_auto.isChecked():
-            return
-        self._trayendo = True
-        en_segundo_plano(
-            remoto.con_conexion,
-            sincronizacion.consultar,
-            al_terminar=self._al_traer,
-            al_fallar=self._al_fallar_traer,
-        )
-
-    def _al_traer(self, res):
-        # Vuelve al hilo de la interfaz: acá se escribe, nunca en el de trabajo.
-        self._trayendo = False
+    # --- traer automático (lo muestra; lo hace el sincronizador) ----------
+    def _al_cambio(self):
+        """Pinta lo último que trajo el sincronizador."""
         if self._cerrado:
             return
-        traido = self._aplicar_traido(res)
-        if traido is None:
+        e = self.sinc.estado
+        if e["lote"] is not None or not e["error"]:
+            self.lote, self.esperados = e["lote"], e["esperados"]
+            self.llegados = self.sinc.equipos_recibidos()
+            self._pintar()
+        if self.sinc.pausado:
+            self.lbl_auto.setText("Pausado: usá \"Traer y reconstruir\" para traer a mano.")
+        elif e["error"]:
+            self.lbl_auto.setText(f"⚠️ Sin conexión con el servidor, se reintenta: {e['error']}")
+        elif e["lote"] is None:
             self.lbl_auto.setText("Sin OT publicada.")
-            return
-        local, escritos = traido
-        if esta_cerrado(local["ruta"]):
+        elif e["cerrada_aca"]:
             self.lbl_auto.setText(
-                f"⚠️ {etiqueta_lote(local)} está cerrada en esta PC: no se trae nada."
+                f"⚠️ {etiqueta_lote(e['lote'])} está cerrada en esta PC: no se trae nada."
             )
         else:
-            nuevos = f" · {escritos} equipo(s) nuevo(s) o actualizado(s)" if escritos else ""
-            office = office_ot.texto_estado(local)
+            nuevos = f" · {e['escritos']} equipo(s) nuevo(s) o actualizado(s)" if e["escritos"] else ""
+            office = office_ot.texto_estado(sincronizacion.lote_local(e["lote"]))
             office = f" · 🔑 {office}" if office else ""
-            self.lbl_auto.setText(f"Última vuelta {res['hora']}{nuevos}{office}")
-
-    def _aplicar_traido(self, res):
-        """
-        Escribe lo que trajo sincronizacion.consultar() y pinta la tabla.
-        Devuelve (lote local, equipos escritos), o None sin OT publicada. Una
-        OT cerrada en esta PC no se toca.
-        """
-        if res is None:
-            self.lote, self.llegados, self.esperados = None, [], []
-            anotar_publicada(None)
-            self._pintar()
-            return None
-        lote = res["lote"]
-        local = sincronizacion.lote_local(lote)
-        anotar_publicada(local)
-        escritos = 0
-        if not esta_cerrado(local["ruta"]):
-            escritos = sincronizacion.aplicar(lote, res["huellas"], res["contenidos"])
-        self.lote, self.esperados = lote, res["esperados"]
-        self.llegados = sincronizacion.equipos_locales(lote, res["huellas"])
-        self._pintar()
-        if escritos:
-            self._refrescar_menu()
-        return local, escritos
-
-    def _al_fallar_traer(self, exc):
-        self._trayendo = False
-        if not self._cerrado:
-            primera = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
-            self.lbl_auto.setText(f"⚠️ Sin conexión con el servidor, se reintenta: {primera}")
+            self.lbl_auto.setText(f"Última vuelta {e['hora']}{nuevos}{office}")
 
     def _refrescar_menu(self):
         inicio = getattr(self.parent(), "inicio", None)
@@ -280,9 +235,9 @@ class PanelClonacion(QDialog):
             avisos.error(self, "Reporte en vivo", "No se pudo abrir el reporte en vivo.")
 
     def done(self, resultado):
-        # Una vuelta que todavía corre no escribe nada al terminar.
+        # El sincronizador sigue trayendo; este panel deja de pintarlo.
         self._cerrado = True
-        self._timer.stop()
+        self.sinc.cambio.disconnect(self._al_cambio)
         super().done(resultado)
 
     # --- acciones ---------------------------------------------------------
@@ -369,11 +324,13 @@ class PanelClonacion(QDialog):
         )
         if datos is None:
             return
-        traido = self._aplicar_traido(datos["res"])
-        if traido is None:
+        res = datos["res"]
+        escritos = self.sinc.aplicar(res)
+        self.sinc.cambio.emit()
+        if res is None:
             avisos.aviso(self, "Sin OT", "Ya no hay OT publicada en el servidor.")
             return
-        local, escritos = traido
+        local = sincronizacion.lote_local(res["lote"])
         if esta_cerrado(local["ruta"]):
             avisos.aviso(
                 self,

@@ -33,6 +33,20 @@ def pytest_sessionfinish(session, exitstatus):
     app.processEvents()
 
 
+@pytest.fixture(autouse=True)
+def _sin_configuracion_real(monkeypatch, tmp_path):
+    """
+    Ningún test usa la configuración real de la PC donde corre: ni el
+    servidor de servidor.json (la app se conectaría sola) ni el lector de
+    lector_celular.json (se encendía y podía reescribir el archivo real).
+    Un test que necesita el servidor lo activa a mano.
+    """
+    from inventario.nucleo import api_celular, config
+
+    monkeypatch.setattr(config, "SERVIDOR_CONFIGURADO", False)
+    monkeypatch.setattr(api_celular, "ARCHIVO_PREFERENCIAS", str(tmp_path / "lector_celular.json"))
+
+
 @pytest.fixture
 def carpeta(tmp_path, monkeypatch):
     """Directorio de trabajo vacío: Reportes_Guardados se arma adentro."""

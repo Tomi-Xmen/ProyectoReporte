@@ -118,9 +118,11 @@ recarga solo cada vez que cambia el lote. Lo sirve el programa en `127.0.0.1`
 
 ### Clonación con FOG
 
-Con el **Panel de clonación** abierto, cada 15 s se trae del servidor lo que
-mandaron los equipos clonados a la OT publicada y se regeneran su HTML y su
-FUSIONADO. Solo baja lo nuevo o lo que cambió: lo cargado en esta PC (un
+Mientras el programa está abierto (no hace falta tener el **Panel de
+clonación** abierto), cada 15 s se trae del servidor lo que mandaron los
+equipos clonados a la OT publicada y se regeneran su HTML y su FUSIONADO. La
+tarjeta de la OT en el menú muestra cuántos llegaron, cuántos esperados
+faltan y si se perdió la conexión; sin OT publicada consulta cada minuto. Solo baja lo nuevo o lo que cambió: lo cargado en esta PC (un
 cargador, una corrección) no se pisa, y lo quitado a mano no vuelve salvo que
 el equipo mande un escaneo nuevo. **Traer y reconstruir** hace lo mismo a
 pedido y además rearma el reporte aunque no haya nada nuevo.

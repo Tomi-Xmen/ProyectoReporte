@@ -125,6 +125,13 @@ cargador, una corrección) no se pisa, y lo quitado a mano no vuelve salvo que
 el equipo mande un escaneo nuevo. **Traer y reconstruir** hace lo mismo a
 pedido y además rearma el reporte aunque no haya nada nuevo.
 
+**Cerrar OT**, desde el menú o desde el panel, es un solo cierre: si la OT
+está publicada para clonación, primero la cierra en el servidor (desde ahí
+ningún equipo puede enviar), trae todo lo que llegó y recién después la
+cierra en la PC, así el FUSIONADO tiene todos los equipos aunque el panel
+haya estado cerrado. Si faltan equipos esperados, lo avisa antes. El celular
+no puede cerrar una OT publicada: indica cerrarla desde el PC.
+
 El post-script de FOG ([`fog_postscript.sh`](fog_postscript.sh)) copia a cada
 equipo el programa, la clave SSH, `servidor.json` y el lanzador
 [`fog_postscript.bat`](fog_postscript.bat), que registra el equipo en su

@@ -351,6 +351,38 @@ def cargar_lote_activo():
     return lote
 
 
+# Copia local de cuál OT está publicada para clonación en el servidor. Solo
+# el servidor lo sabe de verdad; esta copia existe para lo que no puede
+# preguntarle sin trabarse (el celular pide cerrar desde el hilo de la
+# interfaz). La escriben el panel al publicar o consultar y el cierre.
+ARCHIVO_OT_PUBLICADA = ".ot_publicada"
+
+
+def anotar_publicada(lote):
+    """Anota esa OT como la publicada para clonación; None la borra."""
+    ruta = os.path.join(ruta_reportes(), ARCHIVO_OT_PUBLICADA)
+    try:
+        if lote is None:
+            if os.path.exists(ruta):
+                os.remove(ruta)
+            return
+        os.makedirs(ruta_reportes(), exist_ok=True)
+        with open(ruta, "w", encoding="utf-8") as f:
+            f.write(os.path.normcase(os.path.abspath(lote["ruta"])))
+    except OSError:
+        pass
+
+
+def es_publicada(lote):
+    """True si la última vez que se supo, esa OT estaba publicada para clonación."""
+    try:
+        with open(os.path.join(ruta_reportes(), ARCHIVO_OT_PUBLICADA), encoding="utf-8") as f:
+            anotada = f.read().strip()
+    except OSError:
+        return False
+    return bool(anotada) and anotada == os.path.normcase(os.path.abspath(lote["ruta"]))
+
+
 def limpiar_lote_activo():
     ruta = os.path.join(ruta_reportes(), ARCHIVO_LOTE_ACTIVO)
     try:

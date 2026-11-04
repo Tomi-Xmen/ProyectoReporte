@@ -257,6 +257,51 @@ def bajar(cliente, lote, nombres):
     return contenidos
 
 
+def _misma_ot(a, b):
+    return os.path.normcase(a["ruta"]) == os.path.normcase(b["ruta"])
+
+
+def estado_para_cerrar(cliente, lote):
+    """
+    Antes de cerrar una OT: ¿está publicada para clonación? Si lo está, los
+    seriales que ya llegaron al servidor y los esperados que faltan. No
+    escribe nada.
+    """
+    from .remoto import equipos_remotos, leer_esperados, leer_lote_activo_remoto
+
+    activo = leer_lote_activo_remoto(cliente)
+    if not activo or not _misma_ot(activo, lote):
+        return {"publicada": False}
+    recibidos = {
+        str(e.get("SERIAL", "")).strip().upper() for e in equipos_remotos(cliente, lote)
+    }
+    recibidos.discard("")
+    return {
+        "publicada": True,
+        "recibidos": sorted(recibidos),
+        "faltan": [s for s in leer_esperados(cliente, lote) if s.upper() not in recibidos],
+    }
+
+
+def cerrar_en_servidor(cliente, lote, publicada):
+    """
+    Lo que el cierre de una OT hace en el servidor: si está publicada para
+    clonación la cierra ahí (y la despublica), y en todos los casos baja lo
+    que haya llegado. El orden importa: desde el cierre ningún equipo clonado
+    puede enviar más, así que lo bajado después es todo.
+
+    No escribe nada local; el resultado va a aplicar(), en el hilo de la
+    interfaz, antes de cerrar la OT en esta PC.
+    """
+    from .remoto import cerrar_lote_remoto
+
+    if publicada:
+        cerrar_lote_remoto(cliente, lote, len(huellas_remotas(cliente, lote)))
+    huellas = huellas_remotas(cliente, lote)
+    traer, _anotar = a_traer(huellas, lote_local(lote)["ruta"])
+    return {"lote": lote, "huellas": huellas, "contenidos": bajar(cliente, lote, list(traer))}
+
+
 def consultar(cliente):
     """
     Una vuelta de sincronización contra el servidor, sin escribir nada local.

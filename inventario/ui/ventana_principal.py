@@ -42,6 +42,7 @@ from .modulos import (
     panel_clonacion,
     transformadores,
 )
+from .sincronizador import Sincronizador
 from .tareas import con_espera, en_segundo_plano
 from .widgets import Banner, Tarjeta, TarjetaAccion, area_scroll, boton, etiqueta
 
@@ -78,7 +79,15 @@ class PaginaInicio(QWidget):
         self.lbl_ot = etiqueta("", "titulo-dialogo", ajustar=True)
         self.lbl_ot_detalle = etiqueta("", "subtitulo", ajustar=True)
         self.lbl_otras = etiqueta("", "ayuda", ajustar=True)
-        for w in (self.lbl_ot_rotulo, self.lbl_ot, self.lbl_ot_detalle, self.lbl_otras):
+        # Lo que llega de la clonación, se esté mirando o no el panel.
+        self.lbl_clonacion = etiqueta("", "ayuda", ajustar=True)
+        for w in (
+            self.lbl_ot_rotulo,
+            self.lbl_ot,
+            self.lbl_ot_detalle,
+            self.lbl_otras,
+            self.lbl_clonacion,
+        ):
             self.tarjeta_ot.cuerpo.addWidget(w)
         fila_ot = QHBoxLayout()
         fila_ot.setSpacing(8)
@@ -213,6 +222,11 @@ class PaginaInicio(QWidget):
                 resumen += f" y {len(otras) - 3} más"
             self.lbl_otras.setText(f"También abiertas: {resumen}")
         self.lbl_otras.setVisible(bool(otras))
+
+        sinc = getattr(self.ventana, "sincronizador", None)
+        clonacion = sinc.resumen() if sinc is not None else ""
+        self.lbl_clonacion.setText(clonacion)
+        self.lbl_clonacion.setVisible(bool(clonacion))
         self.btn_cambiar.setText(f"🔄 Cambiar OT ({len(abiertos)})")
 
         tarjeta_celular = self.tarjetas.get("Lector celular")
@@ -564,6 +578,10 @@ class VentanaPrincipal(QMainWindow):
 
         self.paginas = QStackedWidget()
         self.setCentralWidget(self.paginas)
+        # Trae lo que mandan los equipos clonados mientras el programa esté
+        # abierto, con o sin el panel de clonación (que solo lo muestra).
+        self.sincronizador = Sincronizador(self)
+        self.sincronizador.cambio.connect(self._al_sincronizar)
         self.inicio = PaginaInicio(self)
         self.escaneo = PaginaEscaneo()
         self.paginas.addWidget(self.inicio)
@@ -571,7 +589,20 @@ class VentanaPrincipal(QMainWindow):
         self.formulario = None
         self.mostrar_menu()
         # Después de mostrar la ventana: si quedó marcado, el lector arranca solo.
-        QTimer.singleShot(0, self._encender_lector)
+        # Atado a la ventana: si se cierra antes, Qt lo cancela en vez de
+        # llamarlo sobre una ventana ya destruida.
+        QTimer.singleShot(0, self, self._encender_lector)
+        QTimer.singleShot(0, self, self.sincronizador.arrancar)
+
+    def _al_sincronizar(self):
+        # El menú refleja equipos nuevos y el estado de la clonación; con un
+        # formulario abierto no se toca nada: se ve al volver al menú.
+        if self.paginas.currentWidget() is self.inicio:
+            self.inicio.refrescar()
+
+    def closeEvent(self, evento):
+        self.sincronizador.detener()
+        super().closeEvent(evento)
 
     def _encender_lector(self):
         celular.encender_al_iniciar(self)

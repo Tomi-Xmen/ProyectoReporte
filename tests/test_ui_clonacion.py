@@ -22,43 +22,91 @@ def app():
     return instancia
 
 
-def test_traer_automatico(app, carpeta, monkeypatch):
-    from inventario.ui.modulos import panel_clonacion
-
+def respuesta_servidor(seriales=("C1", "C2"), esperados=("C1", "C2", "C3")):
+    """Lo que devuelve sincronizacion.consultar() con la OT ACME 553 publicada."""
     publicado = lotes.hacer_lote("Entrega", "ACME", "553", numero_sec="G-9")
-    archivos = {nombre("C1"): json_remoto("C1"), nombre("C2"): json_remoto("C2")}
-    respuesta = {
+    archivos = {nombre(s): json_remoto(s) for s in seriales}
+    return {
         "lote": publicado,
         "huellas": {n: sincronizacion.huella(t) for n, t in archivos.items()},
         "contenidos": archivos,
-        "esperados": ["C1", "C2", "C3"],
+        "esperados": list(esperados),
         "hora": "10:00:00",
     }
-    vueltas = []
+
+
+@pytest.fixture
+def servidor(monkeypatch):
+    """Servidor configurado; cada vuelta del sincronizador contesta 'respuesta' (o falla)."""
+    from inventario.nucleo import config
+    from inventario.ui import sincronizador
+
+    monkeypatch.setattr(config, "SERVIDOR_CONFIGURADO", True)
+    monkeypatch.setattr(config, "SCP_AVAILABLE", True)
+    estado = {"respuesta": respuesta_servidor(), "falla": None, "vueltas": 0}
 
     def en_segundo_plano(_fn, _tarea, al_terminar, al_fallar):
-        vueltas.append(1)
-        al_terminar(respuesta)
+        estado["vueltas"] += 1
+        if estado["falla"]:
+            al_fallar(estado["falla"])
+        else:
+            al_terminar(estado["respuesta"])
 
-    monkeypatch.setattr(panel_clonacion, "en_segundo_plano", en_segundo_plano)
-    panel = panel_clonacion.PanelClonacion(None)
-    panel._traer_auto()
+    monkeypatch.setattr(sincronizador, "en_segundo_plano", en_segundo_plano)
+    return estado
 
-    local = sincronizacion.lote_local(publicado)
+
+def test_traer_automatico_sin_el_panel(app, carpeta, servidor):
+    from inventario.ui.ventana_principal import VentanaPrincipal
+
+    ventana = VentanaPrincipal()
+    ventana.sincronizador.arrancar()
+    local = sincronizacion.lote_local(servidor["respuesta"]["lote"])
     assert {e["SERIAL"] for e in lotes.leer_equipos_lote(local)} == {"C1", "C2"}
+    assert lotes.es_publicada(local)
+    texto = ventana.inicio.lbl_clonacion.text()
+    assert "ACME · OT-553" in texto and "2 recibido(s)" in texto and "faltan 1" in texto
+    # Con OT publicada vuelve rápido; sin conexión, más espaciado y avisa.
+    assert ventana.sincronizador._timer.interval() == 15_000
+    servidor["falla"] = RuntimeError("No se pudo conectar a 192.168.1.10:22\nmás detalle")
+    ventana.sincronizador.traer_ahora()
+    assert ventana.sincronizador._timer.interval() == 60_000
+    assert "sin conexión" in ventana.inicio.lbl_clonacion.text()
+    ventana.close()
+    antes = servidor["vueltas"]
+    ventana.sincronizador.traer_ahora()
+    assert servidor["vueltas"] == antes  # cerrada la ventana, no vuelve a consultar
+
+
+def test_sin_servidor_configurado_no_consulta(app, carpeta, servidor):
+    from inventario.nucleo import config
+    from inventario.ui.ventana_principal import VentanaPrincipal
+
+    config.SERVIDOR_CONFIGURADO = False
+    ventana = VentanaPrincipal()
+    ventana.sincronizador.arrancar()
+    assert servidor["vueltas"] == 0
+    assert not ventana.inicio.lbl_clonacion.isVisibleTo(ventana)
+
+
+def test_el_panel_muestra_lo_que_trae_el_sincronizador(app, carpeta, servidor):
+    from inventario.ui.modulos import panel_clonacion
+
+    panel = panel_clonacion.PanelClonacion(None)
+    panel.sinc.traer_ahora()
     assert "2 equipo(s) nuevo(s)" in panel.lbl_auto.text()
     assert panel.tabla.rowCount() == 3  # dos llegaron, uno falta
     assert "faltan 1" in panel.lbl_resumen.text()
 
-    # Pausado no consulta; al cerrar el panel tampoco.
+    # Pausado no consulta; cerrado el panel, el sincronizador sigue sin pintarlo.
     panel.chk_auto.setChecked(False)
-    antes = len(vueltas)
-    panel._traer_auto()
-    assert len(vueltas) == antes
+    antes = servidor["vueltas"]
+    panel.sinc.traer_ahora()
+    assert servidor["vueltas"] == antes and "Pausado" in panel.lbl_auto.text()
+    panel.chk_auto.setChecked(True)
     panel.done(0)
-    assert not panel._timer.isActive()
-
-    panel._al_fallar_traer(RuntimeError("no conecta"))  # tras cerrar, no revienta
+    panel.sinc.traer_ahora()  # no revienta: el panel ya no escucha
+    panel.sinc._al_fallar(RuntimeError("no conecta"))
 
 
 def test_traer_y_reconstruir_no_pisa_ni_devuelve_lo_quitado(app, carpeta, monkeypatch):
@@ -83,7 +131,9 @@ def test_traer_y_reconstruir_no_pisa_ni_devuelve_lo_quitado(app, carpeta, monkey
 
     mostrados = []
     monkeypatch.setattr(avisos, "info", lambda *a, **k: mostrados.append(a[2]))
-    monkeypatch.setattr(panel_clonacion, "en_segundo_plano", lambda *a, **k: None)
+    from inventario.ui import sincronizador
+
+    monkeypatch.setattr(sincronizador, "en_segundo_plano", lambda *a, **k: None)
     panel = panel_clonacion.PanelClonacion(None)
     panel.lote = publicado
 

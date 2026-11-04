@@ -25,6 +25,7 @@ from .lotes import (
     contar_equipos,
     crear_backup,
     es_activo,
+    es_publicada,
     etiqueta_lote,
     guardar_lote_activo,
     guardar_meta_lote,
@@ -261,7 +262,19 @@ def resumen_cierre(lote):
 
 
 def cerrar(lote):
-    """Lo mismo que "Cerrar OT" del PC: cierre y backup."""
+    """
+    Lo mismo que "Cerrar OT" del PC: cierre y backup. Una OT publicada para
+    clonación no se cierra desde acá: hay que cerrarla también en el servidor
+    y traer antes lo que llegó, y eso necesita la red, que el celular no
+    puede esperar (su pedido corre en el hilo de la interfaz).
+    """
+    if es_publicada(lote):
+        raise ErrorGestion(
+            409,
+            "publicada",
+            "Esta OT está publicada para clonación. Cerrala desde el PC: así "
+            "primero trae los equipos que faltan y la cierra también en el servidor.",
+        )
     total, _malos = cerrar_lote(lote)
     backup = crear_backup("cierre")
     return {

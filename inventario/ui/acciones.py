@@ -11,7 +11,7 @@ import subprocess
 
 from PySide6.QtWidgets import QFileDialog
 
-from ..nucleo import config, escaner, lotes, reconstruccion, remoto
+from ..nucleo import config, escaner, lotes, reconstruccion, remoto, sincronizacion
 from ..nucleo.lotes import MOV_CFG, etiqueta_lote
 from . import avisos
 from .dialogos import elegir_lote, nuevo_lote
@@ -34,24 +34,106 @@ def cambiar_ot(ventana):
     return True
 
 
-def cerrar_ot(ventana):
-    lote = elegir_lote(ventana, "Cerrar OT", "📦 Cerrar esta OT")
-    if not lote:
+def _estado_en_servidor(ventana, lote):
+    """
+    Si la OT está publicada para clonación y qué llegó, según el servidor.
+    Sin servidor configurado, {"publicada": False, "conectado": False}; si
+    falló la conexión y se decide seguir igual, además "sin_revisar": True.
+    None si se prefiere no cerrar.
+    """
+    sin_servidor = {"publicada": False, "conectado": False}
+    if not (config.SERVIDOR_CONFIGURADO and config.SCP_AVAILABLE):
+        return sin_servidor
+    try:
+        estado = con_espera(
+            ventana,
+            "Servidor",
+            "Revisando la OT en el servidor…",
+            remoto.con_conexion,
+            lambda c: sincronizacion.estado_para_cerrar(c, lote),
+        )
+    except Exception as e:
+        if not avisos.confirmar(
+            ventana,
+            "Sin conexión con el servidor",
+            f"No se pudo revisar la OT en el servidor:\n{e}\n\n"
+            "Si está publicada para clonación, el servidor la sigue recibiendo y "
+            "los equipos que lleguen después no van a entrar en el reporte.\n\n"
+            "¿Cerrarla igual, solo en esta PC?",
+        ):
+            return None
+        return {**sin_servidor, "sin_revisar": True}
+    return {**estado, "conectado": True}
+
+
+def cerrar_ot(ventana, lote=None):
+    """
+    El único cierre de OT de la PC (el panel de clonación usa este mismo).
+
+    Con el servidor disponible, antes de cerrar acá: si la OT está publicada
+    para clonación la cierra en el servidor, para que ningún equipo pueda
+    enviar después, y trae todo lo que haya llegado. Así el FUSIONADO que se
+    carga en el sistema tiene todos los equipos, esté o no abierto el panel.
+    """
+    if lote is None:
+        lote = elegir_lote(ventana, "Cerrar OT", "📦 Cerrar esta OT")
+        if not lote:
+            return False
+    equipos = lotes.contar_equipos(lote["ruta"])
+
+    estado = _estado_en_servidor(ventana, lote)
+    if estado is None:
         return False
 
-    if lote["equipos"] == 0 and not avisos.confirmar(
+    if equipos == 0 and not estado.get("recibidos") and not avisos.confirmar(
         ventana, "OT vacía", f"{etiqueta_lote(lote)} no tiene equipos.\n\n¿Cerrarla igual?"
     ):
         return False
 
-    if not avisos.confirmar(
-        ventana,
-        "Confirmar cierre",
+    texto = (
         f"¿Cerrar {etiqueta_lote(lote)}?\n\n"
-        f"{lote['equipos']} equipo(s). Se regenera el JSON FUSIONADO con todo "
-        "lo escaneado y la carpeta queda marcada como finalizada.",
-    ):
+        f"{equipos} equipo(s). Se regenera el JSON FUSIONADO con todo "
+        "lo escaneado y la carpeta queda marcada como finalizada."
+    )
+    if estado["publicada"]:
+        texto += (
+            "\n\n📡 Está publicada para clonación: también se cierra en el servidor "
+            "y los equipos ya no van a poder enviar. Antes de cerrar se trae lo que "
+            f"llegó ({len(estado['recibidos'])} equipo(s) en el servidor)."
+        )
+        faltan = estado["faltan"]
+        if faltan:
+            texto += (
+                f"\n\n⚠️ Todavía faltan {len(faltan)} equipo(s) esperado(s):\n"
+                + "\n".join(f"  • {s}" for s in faltan[:10])
+                + ("\n  …" if len(faltan) > 10 else "")
+            )
+    if not avisos.confirmar(ventana, "Confirmar cierre", texto):
         return False
+
+    traidos = 0
+    if estado["conectado"]:
+        try:
+            res = con_espera(
+                ventana,
+                "Servidor",
+                "Cerrando en el servidor y trayendo lo que llegó…"
+                if estado["publicada"]
+                else "Trayendo lo que haya llegado al servidor…",
+                remoto.con_conexion,
+                lambda c: sincronizacion.cerrar_en_servidor(c, lote, estado["publicada"]),
+            )
+        except Exception as e:
+            avisos.error(
+                ventana,
+                "No se cerró la OT",
+                f"{e}\n\nLa OT sigue abierta en esta PC. Volvé a intentar: lo que "
+                "haya llegado al servidor se trae antes de cerrar.",
+            )
+            return False
+        traidos = sincronizacion.aplicar(res["lote"], res["huellas"], res["contenidos"])
+    if estado["publicada"] or lotes.es_publicada(lote):
+        lotes.anotar_publicada(None)
 
     def cerrar():
         total, malos = lotes.cerrar_lote(lote)
@@ -62,8 +144,14 @@ def cerrar_ot(ventana):
     )
 
     extra = ""
+    if estado["publicada"]:
+        extra += "\n\n📡 También quedó cerrada en el servidor y ya no es la OT de clonación."
+    if traidos:
+        extra += f"\n📥 Se trajeron {traidos} equipo(s) del servidor antes de cerrar."
+    if estado.get("sin_revisar"):
+        extra += "\n\n⚠️ Se cerró solo en esta PC, sin revisar el servidor."
     if equipos_malos:
-        extra = f"\n\n⚠️ {len(equipos_malos)} equipo(s) quedaron con fallas registradas."
+        extra += f"\n\n⚠️ {len(equipos_malos)} equipo(s) quedaron con fallas registradas."
     if ruta_bk:
         extra += f"\n\n🗄️ Backup: {os.path.basename(ruta_bk)}"
     avisos.info(

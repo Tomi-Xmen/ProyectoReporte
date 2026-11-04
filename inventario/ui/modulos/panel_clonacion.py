@@ -22,17 +22,19 @@ from PySide6.QtWidgets import (
 )
 
 from ...nucleo import fog, office_ot, remoto, sincronizacion
-from ...nucleo.lotes import cargar_lote_activo, esta_cerrado, etiqueta_lote, regenerar_lote
-from .. import avisos, reporte_vivo, tema
+from ...nucleo.lotes import (
+    anotar_publicada,
+    cargar_lote_activo,
+    esta_cerrado,
+    etiqueta_lote,
+    regenerar_lote,
+)
+from .. import acciones, avisos, reporte_vivo, tema
 from ..tareas import con_espera, en_segundo_plano
 from ..widgets import Banner, agregar_fila, boton, etiqueta, fila_botones, tabla
 
 # Cada cuánto se trae lo nuevo del servidor mientras el panel está abierto.
 _INTERVALO_TRAER_MS = 15_000
-
-
-def _seriales_recibidos(llegados):
-    return {str(e.get("SERIAL", "")).strip().upper() for e in llegados}
 
 
 class PanelClonacion(QDialog):
@@ -69,7 +71,7 @@ class PanelClonacion(QDialog):
                 boton("📤 Publicar OT activa", self._publicar, variante="marca"),
                 boton("📋 Seriales esperados", self._cargar_esperados, variante="utilidad"),
                 boton("⬇️ Traer y reconstruir", self._traer_y_reconstruir, variante="reparar"),
-                boton("✅ Cerrar lote", self._cerrar_remoto, variante="exito"),
+                boton("✅ Cerrar OT", self._cerrar, variante="exito"),
             )
         )
         # Fila aparte para las acciones de FOG: así no compite por ancho con la
@@ -127,6 +129,7 @@ class PanelClonacion(QDialog):
             self.banner.fijar("⚠️  No se pudo consultar el servidor", "error")
             return
         self.lote, self.llegados, self.esperados = datos
+        anotar_publicada(sincronizacion.lote_local(self.lote) if self.lote else None)
         self._pintar()
 
     def _pintar(self):
@@ -241,10 +244,12 @@ class PanelClonacion(QDialog):
         """
         if res is None:
             self.lote, self.llegados, self.esperados = None, [], []
+            anotar_publicada(None)
             self._pintar()
             return None
         lote = res["lote"]
         local = sincronizacion.lote_local(lote)
+        anotar_publicada(local)
         escritos = 0
         if not esta_cerrado(local["ruta"]):
             escritos = sincronizacion.aplicar(lote, res["huellas"], res["contenidos"])
@@ -304,6 +309,7 @@ class PanelClonacion(QDialog):
             lambda c: remoto.publicar_lote_activo(c, lote) or True,
             "No se pudo publicar",
         ):
+            anotar_publicada(lote)
             avisos.info(self, "Publicada", etiqueta_lote(lote))
             self.refrescar()
 
@@ -387,39 +393,17 @@ class PanelClonacion(QDialog):
             f"regeneraron en:\n{local['ruta']}",
         )
 
-    def _cerrar_remoto(self):
+    def _cerrar(self):
+        """
+        El mismo cierre que el menú (acciones.cerrar_ot): la cierra en el
+        servidor, trae lo que llegó y la cierra en esta PC, todo junto.
+        """
         if not self.lote:
             avisos.aviso(self, "Sin OT", "No hay OT publicada.")
             return
-        recibidos = _seriales_recibidos(self.llegados)
-        faltan = [s for s in self.esperados if s.upper() not in recibidos]
-        aviso = ""
-        if faltan:
-            aviso = (
-                f"\n\n⚠️ Todavía faltan {len(faltan)} equipo(s):\n"
-                + "\n".join(f"  • {s}" for s in faltan[:10])
-                + ("\n  …" if len(faltan) > 10 else "")
-                + "\n\nSi cerrás ahora, esos equipos ya no van a poder enviar."
-            )
-        if not avisos.confirmar(
-            self,
-            "Cerrar lote",
-            f"¿Cerrar {etiqueta_lote(self.lote)} en el servidor?\n\n"
-            f"Recibidos: {len(self.llegados)} equipo(s).{aviso}",
-        ):
-            return
-        lote, total = self.lote, len(self.llegados)
-        if self._remoto(
-            "Cerrando el lote…",
-            lambda c: remoto.cerrar_lote_remoto(c, lote, total) or True,
-            "No se pudo cerrar",
-        ):
-            avisos.info(
-                self,
-                "Lote cerrado",
-                "La OT quedó cerrada en el servidor y ya no es la OT activa.",
-            )
+        if acciones.cerrar_ot(self, sincronizacion.lote_local(self.lote)):
             self.refrescar()
+            self._refrescar_menu()
 
     def _crear_multicast(self):
         try:

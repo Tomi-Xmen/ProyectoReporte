@@ -139,6 +139,17 @@ equipo el programa, la clave SSH, `servidor.json` y el lanzador
 [`fog_postscript.bat`](fog_postscript.bat), que registra el equipo en su
 primer arranque.
 
+### Buscar serie
+
+Menú → **🔎 Buscar serie**. Se escanea o escribe la serie (con 4 caracteres o
+más busca también una parte, para etiquetas gastadas) y muestra cada OT o
+guía en que estuvo el equipo, abiertas, cerradas y lo quitado: fecha,
+entrega o retiro, cliente, estado, fallas, cargador y Office, más las cajas
+de Office que tuvo según la base de licencias. **Generar HTML** arma su
+reporte con las filas marcadas, con la misma plantilla de las OT (copiar a
+Valida, CSV y etiquetas funcionan igual), y lo guarda en
+`Reportes_Guardados/_CONSULTAS/`.
+
 ### Licencias de Office
 
 Menú → **🔑 Licencias de Office**. La base es la fuente de verdad de qué caja
@@ -181,6 +192,7 @@ inventario/
     licencias_office.py  base de cajas de Office: importar, asignar, liberar
     activacion_office.py carga la key en el equipo y activa (OSPP)
     office_ot.py         OT con Office: qué caja va con cada notebook
+    historial.py         buscador de series: historial de un equipo y su HTML
     escaneos.py          lector celular: elegir el serial y aplicarlo al lote
     gestion_lote.py      lector celular: cargadores, mover/quitar, guía/OT, cierre
     api_celular.py       lector celular: qué responde el PC a cada pedido

@@ -35,6 +35,7 @@ from .componentes import COMPONENTES, RevisionComponentes, SeccionOffice
 from .dialogos import nuevo_lote
 from .modulos import (
     asignar_office,
+    buscar_serie,
     celular,
     etiquetas,
     licencias,
@@ -149,6 +150,9 @@ class PaginaInicio(QWidget):
             layout,
             "Herramientas",
             [
+                ("🔎", "Buscar serie",
+                 "Historial de un equipo en todas las OT y guías, y su reporte HTML.",
+                 "pizarra", buscar_serie.abrir),
                 ("🔌", "Agregar transformadores",
                  "Asigna cargadores a los equipos de la OT activa.", "pizarra",
                  transformadores.abrir),

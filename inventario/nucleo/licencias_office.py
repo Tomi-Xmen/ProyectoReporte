@@ -736,6 +736,31 @@ def historial(caja):
     return [dict(f) for f in filas]
 
 
+def cajas_del_serial(serial):
+    """
+    Cajas que alguna vez estuvieron en ese equipo, según el historial (una
+    caja liberada ya no guarda el serial en su fila): [(caja, fecha)], de la
+    más reciente a la más vieja, una vez cada caja.
+    """
+    serial = str(serial or "").strip()
+    if not serial or not existe_base():
+        return []
+    patron = re.compile(rf"(?:^|\s)SN {re.escape(serial)}(?:$|\s|·)")
+    with _conexion() as con:
+        filas = con.execute(
+            "SELECT caja, fecha, detalle FROM historial "
+            "WHERE evento IN ('asignada', 'antes de importar') AND detalle LIKE ? "
+            "ORDER BY id DESC",
+            (f"%SN {serial}%",),
+        ).fetchall()
+    vistas, cajas = set(), []
+    for f in filas:
+        if f["caja"] not in vistas and patron.search(f["detalle"]):
+            vistas.add(f["caja"])
+            cajas.append((f["caja"], f["fecha"]))
+    return cajas
+
+
 def resumen():
     """{version: {disponible: n, asignada: n, deshabilitada: n}}."""
     if not existe_base():

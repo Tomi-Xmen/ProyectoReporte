@@ -210,12 +210,13 @@ function filasValida(d){
 
   /* d.office solo existe si tiene_office fue true al cargar el equipo (ver
      construir_entry_html): si el registro no llevaba Office, esta fila no
-     entra. La key puede faltar (SN_APP="PENDIENTE") y aun así el equipo
-     lleva Office, así que la fila se exporta igual, con la serie en blanco. */
+     entra. El número de caja puede faltar (SN_APP="PENDIENTE") y aun así el
+     equipo lleva Office, así que la fila se exporta igual, con la serie en
+     blanco. "Key:" queda por los reportes viejos que guardaban la key. */
   if(d.office){
     let ver=(d.office.match(/Office\s+([A-Za-z0-9]+)/)||[])[1]||"2016";
-    let key=(d.office.match(/Key:\s*([^)]+)/)||[])[1]||"";
-    filas.push([`OFFICE ${ver}`, "HOME AND BUSINESS", key.trim(), ""]);
+    let caja=(d.office.match(/(?:Caja|Key):\s*([^)]+)/)||[])[1]||"";
+    filas.push([`OFFICE ${ver}`, "HOME AND BUSINESS", caja.trim(), ""]);
   }
 
   /* El transformador va sin nombre: en Valida se carga como accesorio y con la
@@ -305,13 +306,13 @@ function resumenFusionadoDesdeDOM(eq){
       hdd.push(th.nextElementSibling.innerText.trim());
   });
   let obs=val('.obs-row td');
-  let key=((val('.office-row td').match(/Key:\s*([^)]+)/)||[])[1]||"").trim();
+  let caja=((val('.office-row td').match(/(?:Caja|Key):\s*([^)]+)/)||[])[1]||"").trim();
   return {
     SERIAL: val('.serial-tag'),
     SN_Win: val('.win-key'),
     SN_HDD: hdd.join("_")||"PENDIENTE",
     SN_Transf: val('.transf-tag')||"PENDIENTE",
-    SN_APP: key||null,
+    SN_APP: caja||null,
     OBS: (obs&&obs!=="Sin observaciones")?obs:null
   };
 }
@@ -623,9 +624,24 @@ def fijar_total_count(content, total):
     )
 
 
+# Una key de producto (5 grupos de 5): la forma que tenían algunos reportes
+# viejos en SN_APP, antes de que ahí fuera el número de caja.
+_ES_KEY = re.compile(r"[A-Z0-9]{5}(?:-[A-Z0-9]{5}){4}")
+
+
+def numero_office(eq):
+    """
+    Lo que identifica al Office del equipo en el reporte, en Valida y en el
+    FUSIONADO: el número de su caja. Si la caja salió de la base de licencias
+    manda OFFICE_CAJA (registros que guardaron la key en SN_APP salen bien
+    igual); si no, lo cargado a mano en SN_APP.
+    """
+    return eq.get("OFFICE_CAJA") or eq.get("SN_APP", "PENDIENTE")
+
+
 def resumen_fusionado(eq):
     """Resumen logístico de un equipo para el JSON FUSIONADO del lote."""
-    sn_app = eq.get("SN_APP", "PENDIENTE")
+    sn_app = numero_office(eq)
     obs = eq.get("OBS", "")
     return {
         "SERIAL": eq.get("SERIAL", ""),
@@ -715,24 +731,20 @@ def reconstruir_entry_desde_json(jdata, diferencias_req=None):
     detalle_componentes = jdata.get("DETALLE_COMPONENTES", [])
     office_str = jdata.get("OFFICE", "No")
 
-    # La Key de Office vive en SN_APP: hay que reponerla en la fila porque el
-    # export a Valida (filasValida) la saca leyendo el "(Key: ...)" de este
-    # texto. Si no se repone, la fila igual se ve en el reporte pero el export
-    # la saltea: sin key no hay nada que cargar en Valida.
+    # El número de caja va en la fila porque el export a Valida (filasValida)
+    # lo saca leyendo el "(Caja: ...)" de este texto: sin él la fila se ve en
+    # el reporte, pero se exporta con la serie en blanco.
     office_html = ""
     if office_str and office_str != "No":
-        sn_app = jdata.get("SN_APP", "")
-        key_part = (
-            f" (Key: {sn_app})" if sn_app and sn_app not in ("PENDIENTE", None) else ""
-        )
-        # La caja va DESPUÉS del paréntesis: filasValida toma la versión del
-        # primer 'Office NNNN' y la key hasta el ')'.
-        caja = jdata.get("OFFICE_CAJA")
-        if caja:
-            key_part += f" · Caja {html.escape(str(caja))}"
+        numero = numero_office(jdata)
+        caja_part = ""
+        if numero not in ("PENDIENTE", "", None):
+            # Los reportes viejos guardaban a mano la key: se rotula como lo que es.
+            rotulo = "Key" if _ES_KEY.fullmatch(str(numero).upper()) else "Caja"
+            caja_part = f" ({rotulo}: {html.escape(str(numero))})"
         office_html = (
             f'<tr class="office-row"><th>🔑 Office Instalado</th>'
-            f"<td><b>{office_str}</b>{key_part}</td></tr>"
+            f"<td><b>{office_str}</b>{caja_part}</td></tr>"
         )
 
     # El nivel superior del JSON repite serial, modelo y licencia; se usan como

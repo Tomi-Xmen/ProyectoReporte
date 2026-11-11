@@ -133,7 +133,7 @@ def test_office_y_su_key(api, lote_con_equipos):
     assert editar(api, {"office": "2024", "sn_app": "KEY-123"})[0] == 200
     jdata = json_equipo(lote_con_equipos, "SN1")
     assert (jdata["OFFICE"], jdata["SN_APP"]) == ("Office 2024", "KEY-123")
-    assert "(Key: KEY-123)" in html_lote(lote_con_equipos)
+    assert "(Caja: KEY-123)" in html_lote(lote_con_equipos)
     assert ficha(api)["datos"]["office"] == "Office 2024"
 
     assert editar(api, {"office": "No"})[0] == 200

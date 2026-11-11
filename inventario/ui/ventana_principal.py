@@ -476,7 +476,8 @@ class PaginaFormulario(QWidget):
             lic = self._asignar_caja(caja)
             if lic is None:
                 return
-            office_key = lic["clave"]
+            # Al reporte va el número de caja; la key solo sirve para activar.
+            office_key = lic["caja"]
             version_office = lic["version"] or version_office
 
         total = lotes.guardar_equipo_general(

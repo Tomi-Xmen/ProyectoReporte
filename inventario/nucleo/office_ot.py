@@ -3,10 +3,11 @@ Office por OT: la OT de entrega dice con qué Office van sus equipos y, en la
 pantalla "Asignar Office", se elige qué caja va con cada notebook.
 
 La app no elige por su cuenta: la caja física que acompaña a cada equipo la
-decide quien arma la entrega (escaneándola en su fila). Al guardar, la key
-se escribe en el JSON (SN_APP, OFFICE, OFFICE_CAJA) como si se hubiera
-cargado a mano, y el HTML y el FUSIONADO se regeneran con ella: el export a
-Valida la toma igual.
+decide quien arma la entrega (escaneándola en su fila). Al guardar, el
+número de caja se escribe en el JSON (SN_APP, OFFICE, OFFICE_CAJA) como si se
+hubiera cargado a mano, y el HTML y el FUSIONADO se regeneran con él: el
+export a Valida lo toma igual. La key no va al reporte: se lee de la base
+cuando hace falta (activar, copiarla en "Asignar Office").
 """
 
 import json
@@ -97,7 +98,7 @@ def guardar_cajas(lote, filas):
         antes = (jdata.get("OFFICE"), jdata.get("SN_APP"), jdata.get("OFFICE_CAJA"))
         if lic:
             jdata["OFFICE"] = f"Office {lic['version'] or version_ot}"
-            jdata["SN_APP"] = lic["clave"]
+            jdata["SN_APP"] = lic["caja"]
             jdata["OFFICE_CAJA"] = lic["caja"]
         elif jdata.get("OFFICE_CAJA"):
             jdata.pop("OFFICE_CAJA")

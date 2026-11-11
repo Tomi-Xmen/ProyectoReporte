@@ -263,7 +263,7 @@ private fun CamposDatos(ficha: FichaEquipo, datos: DatosEquipo, cambiar: (DatosE
             }
         }
         if (datos.office.isNotBlank() || datos.snApp.isNotBlank()) {
-            Campo("Key de Office", datos.snApp, monoespaciada = true) { cambiar(datos.copy(snApp = it)) }
+            Campo("N° de caja de Office", datos.snApp, monoespaciada = true) { cambiar(datos.copy(snApp = it)) }
         }
         Campo("Observaciones", datos.obs, unaLinea = false) { cambiar(datos.copy(obs = it)) }
     }

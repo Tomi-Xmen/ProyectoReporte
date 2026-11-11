@@ -95,19 +95,19 @@ def test_guardar_las_cajas_elegidas(ot_office):
     assert office_ot.guardar_cajas(ot_office, filas(ot_office, {"SN1": "C-3", "SN2": "c-1"})) == 2
 
     sn1 = equipo(ot_office, "SN1")
-    assert (sn1["OFFICE"], sn1["OFFICE_CAJA"], sn1["SN_APP"]) == (
-        "Office 2016", "C-3", L.buscar("C-3")["clave"]
-    )
+    # Al JSON y al reporte va el número de caja, nunca la key.
+    assert (sn1["OFFICE"], sn1["OFFICE_CAJA"], sn1["SN_APP"]) == ("Office 2016", "C-3", "C-3")
     assert equipo(ot_office, "SN3").get("OFFICE_CAJA") is None
     lic = L.buscar("C-3")
     assert (lic["serial"], lic["cliente"], lic["documento"]) == ("SN1", "ACME", "OT-553")
 
     # El HTML y el FUSIONADO salen con la key.
     with open(lotes.ruta_html_lote(ot_office), encoding="utf-8") as f:
-        assert f"(Key: {sn1['SN_APP']}) · Caja C-3" in f.read()
+        contenido = f.read()
+    assert "(Caja: C-3)" in contenido and L.buscar("C-3")["clave"] not in contenido
     with open(lotes.ruta_fusionado(ot_office), encoding="utf-8") as f:
         fusionado = {e["SERIAL"]: e for e in json.load(f)}
-    assert fusionado["SN1"]["SN_APP"] == sn1["SN_APP"]
+    assert fusionado["SN1"]["SN_APP"] == "C-3"
 
     assert "1 sin caja" in office_ot.texto_estado(ot_office)
     # Guardar lo mismo otra vez no cambia nada.
@@ -191,3 +191,29 @@ def test_quitar_el_equipo_libera_su_caja(ot_office):
     gestion_lote.quitar_equipo(ot_office, "SN1")
     assert L.buscar("C-1")["estado"] == "disponible"
     assert "quitado de ACME · OT-553" in L.historial("C-1")[0]["detalle"]
+
+
+def test_el_reporte_lleva_el_numero_de_caja_no_la_key():
+    from inventario.nucleo.reporte_html import (
+        HTML_START,
+        numero_office,
+        reconstruir_entry_desde_json,
+        resumen_fusionado,
+    )
+
+    base = {"SERIAL": "X1", "OFFICE": "Office 2016", "DATA": {}}
+    # Guardado antes de este cambio: la key en SN_APP, la caja en OFFICE_CAJA.
+    guardado = {**base, "SN_APP": "AAAAA-BBBBB-CCCCC-DDDDD-00001", "OFFICE_CAJA": "C-9"}
+    assert numero_office(guardado) == "C-9"
+    assert resumen_fusionado(guardado)["SN_APP"] == "C-9"
+    entrada = reconstruir_entry_desde_json(guardado)
+    assert "(Caja: C-9)" in entrada and "AAAAA" not in entrada
+
+    # Un reporte viejo con la key escrita a mano se rotula como lo que es.
+    viejo = {**base, "SN_APP": "AAAAA-BBBBB-CCCCC-DDDDD-00001"}
+    assert "(Key: AAAAA-BBBBB-CCCCC-DDDDD-00001)" in reconstruir_entry_desde_json(viejo)
+    assert "(Caja: 99990001)" in reconstruir_entry_desde_json({**base, "SN_APP": "99990001"})
+    assert "(Caja" not in reconstruir_entry_desde_json({**base, "SN_APP": "PENDIENTE"})
+
+    # Copiar a Valida y el FUSIONADO del navegador leen los dos rótulos.
+    assert HTML_START.count("(?:Caja|Key):") == 2

@@ -124,7 +124,7 @@ def test_formulario_guarda_equipo(app, lote_con_equipos, sin_modales):
     form.revision._filas[1][2].setText("pantalla rota")
     form.entry_obs.setText("obs general")
     form.office.chk.setChecked(True)
-    form.office.entry_key.setText("OFF-KEY")
+    form.office.entry_numero.setText("OFF-KEY")
     form._guardar()
 
     (eq,) = lotes.leer_equipos_lote(retiro)
@@ -212,25 +212,24 @@ def base_office(carpeta):
 
 def test_seccion_office_busca_la_caja(app, base_office):
     from inventario.ui.componentes import SeccionOffice
-    from test_licencias_office import K1
 
     sec = SeccionOffice(serial="SN-NUEVO")
     sec.entry_caja.setText("1000000798904")  # el código de barras de la caja
     sec._buscar_caja()
-    assert sec.chk.isChecked() and sec.entry_key.text() == K1
-    assert sec.entry_key.isReadOnly() and sec.combo_version.currentText() == "2013"
+    assert sec.chk.isChecked() and sec.entry_numero.text() == "88880811420680"
+    assert sec.entry_numero.isReadOnly() and sec.combo_version.currentText() == "2013"
     assert "disponible" in sec.lbl_caja.text() and sec.activar()
     assert sec.caja() == "1000000798904"
 
     sec.entry_caja.setText("NO-EXISTE")
     sec._buscar_caja()
     assert "no está en la base" in sec.lbl_caja.text()
-    assert sec.entry_key.text() == "" and not sec.entry_key.isReadOnly()
+    assert sec.entry_numero.text() == "" and not sec.entry_numero.isReadOnly()
 
     # Asignada a otro equipo: avisa y no carga la key ajena.
     sec.entry_caja.setText("88880811759930")
     sec._buscar_caja()
-    assert "otro equipo" in sec.lbl_caja.text() and sec.entry_key.text() == ""
+    assert "otro equipo" in sec.lbl_caja.text() and sec.entry_numero.text() == ""
 
 
 def test_formulario_asigna_caja_y_activa(app, lote_con_equipos, base_office, sin_modales, monkeypatch):
@@ -250,13 +249,15 @@ def test_formulario_asigna_caja_y_activa(app, lote_con_equipos, base_office, sin
     form._guardar()
 
     eq = [e for e in lotes.leer_equipos_lote(lote_con_equipos) if e["SERIAL"] == "E7"][0]
-    assert (eq["SN_APP"], eq["OFFICE"], eq["OFFICE_CAJA"]) == (K1, "Office 2013", "88880811420680")
+    # Al JSON va el número de caja; la key solo se usa para activar.
+    assert (eq["SN_APP"], eq["OFFICE"], eq["OFFICE_CAJA"]) == ("88880811420680", "Office 2013", "88880811420680")
     assert activadas == [(K1, "2013")]
     lic = base_office.buscar("88880811420680")
     assert (lic["serial"], lic["documento"], lic["activacion"]) == ("E7", "OT-553", "activada")
     assert sin_modales[-1][0] == "info"
     with open(lotes.ruta_html_lote(lote_con_equipos), encoding="utf-8") as f:
-        assert f"(Key: {K1}) · Caja 88880811420680" in f.read()
+        contenido = f.read()
+    assert "(Caja: 88880811420680)" in contenido and K1 not in contenido
 
 
 def test_formulario_no_guarda_si_la_caja_es_de_otro(app, lote_con_equipos, base_office, sin_modales):

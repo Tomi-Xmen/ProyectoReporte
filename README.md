@@ -162,7 +162,8 @@ tiene cada equipo.
   cajas* muestra las disponibles y en qué caja de almacenamiento están.
 - **🔑 Asignar Office**: se elige qué caja va con cada notebook (pistola,
   pegar desde Excel o doble clic). Guardar asigna todo junto o nada, escribe
-  la key en cada JSON y regenera el reporte. Después cada fila muestra su key
+  el número de caja en cada JSON y regenera el reporte (al reporte, a Valida y
+  al FUSIONADO va el número de caja, nunca la key). Después cada fila muestra su key
   con un botón **Copiar** para activar Office en el equipo.
 - En el formulario se puede escanear la caja del equipo; en 2013/2016 la app
   carga la key y activa Office (pide permiso de administrador una vez).

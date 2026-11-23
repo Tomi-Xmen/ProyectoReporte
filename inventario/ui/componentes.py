@@ -105,10 +105,11 @@ class RevisionComponentes(QWidget):
 
 class SeccionOffice(QWidget):
     """
-    Casilla 'Registrar Office' + versión + key (habilitadas solo si se marca).
+    Casilla 'Registrar Office' + versión + N° de caja (habilitadas solo si se marca).
 
     Con 'serial' suma el código de caja: al escanear la caja (o su código de
-    barras) la key y la versión salen de la base de licencias y quedan fijas.
+    barras) el número de caja y la versión salen de la base de licencias y
+    quedan fijos.
     Es solo una vista previa: la caja se asigna de verdad al guardar, con
     licencias_office.asignar(), que es quien decide si sigue libre.
 
@@ -150,12 +151,14 @@ class SeccionOffice(QWidget):
             self.lbl_caja.hide()
             layout.addWidget(self.lbl_caja)
 
-        self.entry_key = QLineEdit()
-        self.entry_key.setProperty("rol", "clave")
-        self.entry_key.setPlaceholderText("Key de Office")
-        self.entry_key.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.entry_key.setEnabled(False)
-        layout.addWidget(self.entry_key)
+        # Lo que identifica al Office en el reporte y en Valida: el número de
+        # su caja (la key solo sirve para activar y vive en la base).
+        self.entry_numero = QLineEdit()
+        self.entry_numero.setProperty("rol", "clave")
+        self.entry_numero.setPlaceholderText("N° de caja de Office")
+        self.entry_numero.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.entry_numero.setEnabled(False)
+        layout.addWidget(self.entry_numero)
 
         if serial is not None:
             self.chk_activar = QCheckBox("⚡ Cargar la key y activar Office en este equipo")
@@ -192,10 +195,10 @@ class SeccionOffice(QWidget):
         )
 
     def _al_marcar(self, marcado):
-        self.entry_key.setEnabled(marcado)
+        self.entry_numero.setEnabled(marcado)
         self.combo_version.setEnabled(marcado and self.licencia is None and not self.version_ot)
         if not marcado:
-            self.entry_key.clear()
+            self.entry_numero.clear()
         if self.entry_caja is not None:
             if not marcado:
                 self.entry_caja.clear()
@@ -207,14 +210,14 @@ class SeccionOffice(QWidget):
         self.lbl_caja.setVisible(bool(texto))
 
     def _soltar_licencia(self):
-        """Vuelve a la carga manual: la key deja de estar fija."""
+        """Vuelve a la carga manual: el número de caja deja de estar fijo."""
         if self.licencia is not None:
-            self.entry_key.clear()
+            self.entry_numero.clear()
         self.licencia = None
-        # En una OT con Office la key sale de la base: no se tipea.
-        self.entry_key.setReadOnly(bool(self.version_ot))
-        self.entry_key.setPlaceholderText(
-            "Sale de la caja" if self.version_ot else "Key de Office"
+        # En una OT con Office la caja sale de la base: no se tipea.
+        self.entry_numero.setReadOnly(bool(self.version_ot))
+        self.entry_numero.setPlaceholderText(
+            "Sale de la caja escaneada" if self.version_ot else "N° de caja de Office"
         )
         self.combo_version.setEnabled(self.chk.isChecked() and not self.version_ot)
         self.chk_activar.setVisible(
@@ -258,8 +261,8 @@ class SeccionOffice(QWidget):
         if lic["version"] in VERSIONES_OFFICE:
             self.combo_version.setCurrentText(lic["version"])
         self.combo_version.setEnabled(False)
-        self.entry_key.setText(lic["clave"])
-        self.entry_key.setReadOnly(True)
+        self.entry_numero.setText(lic["caja"])
+        self.entry_numero.setReadOnly(True)
         self.chk_activar.setVisible(activacion_office.aplica(lic["version"]))
         if lic["estado"] == licencias_office.ASIGNADA:
             estado = "ya asignada a este equipo"
@@ -281,10 +284,10 @@ class SeccionOffice(QWidget):
         self._aviso_caja(texto)
 
     def valores(self):
-        """(tiene_office, office_key, version_office)."""
+        """(tiene_office, número de caja, version_office)."""
         return (
             self.chk.isChecked(),
-            self.entry_key.text().strip(),
+            self.entry_numero.text().strip(),
             self.combo_version.currentText(),
         )
 

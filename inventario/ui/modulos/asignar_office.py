@@ -212,23 +212,35 @@ class DialogoAsignarOffice(QDialog):
         self._revisar_todo()
 
     # ── Keys ───────────────────────────────────────────────
+    def _key_guardada(self, jdata):
+        """
+        La key de la caja ya guardada en el equipo, o ''. Se lee de la base:
+        al JSON (y al reporte) va solo el número de caja.
+        """
+        caja = jdata.get("OFFICE_CAJA")
+        if not caja:
+            return ""
+        try:
+            lic = licencias_office.buscar(caja)
+        except sqlite3.Error:
+            return ""
+        return lic["clave"] if lic and lic["serial"] == jdata.get("SERIAL") else ""
+
     def _mostrar_keys(self):
         """La key de cada equipo, solo cuando su caja ya está guardada."""
         # Monoespaciada: se lee carácter por carácter al tipearla en Office.
         fuente = QFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         for fila, (_ruta, jdata) in enumerate(self._registros):
-            guardada = bool(jdata.get("OFFICE_CAJA")) and jdata.get("SN_APP") not in (
-                None, "", office_ot.PENDIENTE
-            )
-            item = QTableWidgetItem(jdata["SN_APP"] if guardada else "")
+            clave = self._key_guardada(jdata)
+            item = QTableWidgetItem(clave)
             item.setFont(fuente)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsSelectable)
             self.tabla.setItem(fila, _COL_KEY, item)
-            self.tabla.cellWidget(fila, _COL_COPIAR).setEnabled(guardada)
+            self.tabla.cellWidget(fila, _COL_COPIAR).setEnabled(bool(clave))
 
     def _copiar_key(self, fila):
         jdata = self._registros[fila][1]
-        QApplication.clipboard().setText(jdata.get("SN_APP", ""))
+        QApplication.clipboard().setText(self._key_guardada(jdata))
         self.lbl_estado.setText(
             f"📋 Key de {jdata.get('SERIAL', '?')} (caja {jdata.get('OFFICE_CAJA', '?')}) "
             "copiada: pegala en Office para activarlo."
